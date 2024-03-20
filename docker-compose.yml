@@ -1,0 +1,44 @@
+env_file:
+  path: ./dev.env
+    required: true # default
+  path: ./es.env
+    required: false
+
+services:
+  mariadb:
+    image : mariadb:3.2
+    restart: always
+    ports:
+      - 3306:3306
+    volumes:
+      - type: volume
+        source: mariadb_data
+        target: /var/lib/mysql
+        security_opt:
+          - label:disable
+      - type: volume
+        source: mariadb_conf
+        taget: /etc/mysql/conf.d
+        read_only: true
+      - type: volume
+        source: mariadb_cert
+        target: /etc/mysql/ssl
+        read_only: true
+    environment:
+      MARIADB_ROOT_PASSWORD: example
+
+volumes:
+  mariadb_cert:
+    driver: local
+  mariadb_conf:
+    driver: local
+  mariadb_data:
+    driver: local
+
+networks:
+  sql-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.3.0.0/16
+          gateway: 10.5.0.1
