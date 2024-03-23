@@ -1,10 +1,28 @@
 env_file:
-  path: ./dev.env
+  - path: './.env'
     required: true # default
-  path: ./es.env
+  - path: './dev.env'
     required: false
 
 services:
+  db_init:
+    env_file:
+      - './db_init/.env'
+    build: './db_init/Dockerfile'
+    volumes:
+      - type: volume
+        source: mariadb_cert
+        target: ${SQL_CERTIF_PATH}
+        read_only: true
+      - type: volume
+        source: client_ssl_cert
+        taget: ${CLIENT_CERTIF_PATH}
+    healthcheck:
+      test: ["bash", "-c", "[-f ]"]
+      interval: 1s
+      timeout: 1s
+      retries: 30
+    
   mariadb:
     image : mariadb:3.2
     restart: always
@@ -22,7 +40,7 @@ services:
         read_only: true
       - type: volume
         source: mariadb_cert
-        target: /etc/mysql/ssl
+        target: ${SQL_CERTIF_PATH}
         read_only: true
     environment:
       MARIADB_ROOT_PASSWORD: example
@@ -33,6 +51,8 @@ volumes:
   mariadb_conf:
     driver: local
   mariadb_data:
+    driver: local
+  client_ssl_cert:
     driver: local
 
 networks:
