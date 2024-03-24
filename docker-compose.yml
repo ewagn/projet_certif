@@ -1,49 +1,134 @@
-env_file:
-  - path: './.env'
-    required: true # default
-  - path: './dev.env'
-    required: false
+version: "2.24"
+name: isearch_app
 
 services:
   db_init:
-    env_file:
-      - './db_init/.env'
-    build: './db_init/Dockerfile'
+    # env_file:
+    #   - path: ./db_init/db.env
+    #     required: true
+    environment:
+      - SQL_CERTIF_PATH=${SQL_CERTIF_PATH}
+      - CLIENT_CERTIF_PATH=${CLIENT_CERTIF_PATH}
+    build: './db_init/'
     volumes:
-      - type: volume
-        source: mariadb_cert
-        target: ${SQL_CERTIF_PATH}
-        read_only: true
-      - type: volume
-        source: client_ssl_cert
-        taget: ${CLIENT_CERTIF_PATH}
-    healthcheck:
-      test: ["bash", "-c", "[-f ]"]
-      interval: 1s
-      timeout: 1s
-      retries: 30
+      - mariadb_cert:${SQL_CERTIF_PATH}
+      - client_ssl_cert:${CLIENT_CERTIF_PATH}
     
   mariadb:
-    image : mariadb:3.2
+    image : mariadb:11.3
+    environment:
+      - MARIADB_ROOT_PASSWORD_FILE=/run/secrets/mariadb_root_pwd
+      - MARIADB_PASSWORD_FILE=/run/secrets/mariadb_mysql_pwd
+    env_file: 
+      - path: ./db_init/db.env
+        required: true
+    secrets:
+      - mariadb_root_pwd
+      - mariadb_mysql_pwd
+    depends_on:
+      db_init:
+        condition: service_completed_successfully
     restart: always
     ports:
       - 3306:3306
     volumes:
-      - type: volume
-        source: mariadb_data
-        target: /var/lib/mysql
-        security_opt:
-          - label:disable
-      - type: volume
-        source: mariadb_conf
-        taget: /etc/mysql/conf.d
-        read_only: true
-      - type: volume
-        source: mariadb_cert
-        target: ${SQL_CERTIF_PATH}
-        read_only: true
+      - mariadb_data:/var/lib/mysql:Z
+      - mariadb_conf:/etc/mysql/conf.d,readonly
+      - mariadb_cert:${SQL_CERTIF_PATH},readonly
+    networks:
+      sql-network:
+        ipv4_address: 10.2.0.3
+  
+  es-setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    volumes:
+      - es_certs:/usr/share/elasticsearch/config/certs
+    user: "0"
+    command: >
+      bash -c '
+        if [ x${ELASTIC_PASSWORD} == x ]; then
+          echo "Set the ELASTIC_PASSWORD environment variable in the .env file";
+          exit 1;
+        fi;
+        if [ ! -f config/certs/ca.zip ]; then
+          echo "Creating CA";
+          bin/elasticsearch-certutil ca --silent --pem -out config/certs/ca.zip;
+          unzip config/certs/ca.zip -d config/certs;
+        fi;
+        if [ ! -f config/certs/certs.zip ]; then
+          echo "Creating certs";
+          echo -ne \
+          "instances:\n"\
+          "  - name: es01\n"\
+          "    dns:\n"\
+          "      - es01\n"\
+          "      - es-network\n"\
+          "    ip:\n"\
+          "      - 127.0.0.1\n"\
+          > config/certs/instances.yml;
+          bin/elasticsearch-certutil cert --silent --pem -out config/certs/certs.zip --in config/certs/instances.yml --ca-cert config/certs/ca/ca.crt --ca-key config/certs/ca/ca.key;
+          unzip config/certs/certs.zip -d config/certs;
+        fi;
+        echo "Setting file permissions"
+        chown -R root:root config/certs;
+        find . -type d -exec chmod 750 \{\} \;;
+        find . -type f -exec chmod 640 \{\} \;;
+        echo "Waiting for Elasticsearch availability";
+        until curl -s --cacert config/certs/ca/ca.crt https://es01:9200 | grep -q "missing authentication credentials"; do sleep 30; done;
+        echo "All done!";
+      '
+    healthcheck:
+      test: ["CMD-SHELL", "[ -f config/certs/es01/es01.crt ]"]
+      interval: 1s
+      timeout: 5s
+      retries: 120
+    networks:
+      - es-network
+
+  es01:
+    depends_on:
+      es-setup:
+        condition: service_healthy
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    volumes:
+      - es_certs:/usr/share/elasticsearch/config/certs
+      - esdata01:/usr/share/elasticsearch/data
+    ports:
+      - ${ES_PORT}:9200
     environment:
-      MARIADB_ROOT_PASSWORD: example
+      - node.name=es01
+      - cluster.name=${CLUSTER_NAME}
+      - cluster.initial_master_nodes=es01
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      #- ELASTIC_PASSWORD_FILE=/run/secrets/elasticsearch_pwd
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=true
+      - xpack.security.http.ssl.key=certs/es01/es01.key
+      - xpack.security.http.ssl.certificate=certs/es01/es01.crt
+      - xpack.security.http.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.key=certs/es01/es01.key
+      - xpack.security.transport.ssl.certificate=certs/es01/es01.crt
+      - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.license.self_generated.type=${LICENSE}
+    mem_limit: ${MEM_LIMIT}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s --cacert config/certs/ca/ca.crt https://es-network:9200 | grep -q 'missing authentication credentials'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+    networks:
+      - es-network
 
 volumes:
   mariadb_cert:
@@ -54,11 +139,31 @@ volumes:
     driver: local
   client_ssl_cert:
     driver: local
+  volumes:
+  es_certs:
+    driver: local
+  esdata01:
+    driver: local
+
+
+secrets:
+  mariadb_root_pwd:
+    file: './db_init/mariadb_root_pwd.txt'
+  mariadb_mysql_pwd:
+    file: './db_init/mariadb_mysql_pwd.txt'
+  # elasticsearch_pwd:
+  #   file: './es_files/elasticsearch_pwd.txt'
 
 networks:
   sql-network:
     driver: bridge
     ipam:
       config:
-        - subnet: 10.3.0.0/16
-          gateway: 10.5.0.1
+        - subnet: 10.2.0.0/16
+          gateway: 10.2.0.1
+  es-network:
+    driver: bridge
+    ipam:
+      config:
+          - subnet: 10.6.0.0/16
+            gateway: 10.6.0.1

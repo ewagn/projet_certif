@@ -225,3 +225,9 @@ volumes:
     driver: local
   kibanadata:
     driver: local
+
+secrets:
+  mariadb_root_pwd:
+    external: true
+  mariadb_mysql_pwd:
+    external: true
