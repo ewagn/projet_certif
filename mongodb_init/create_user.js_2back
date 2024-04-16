@@ -1,0 +1,14 @@
+print("Started Adding the Users.");
+
+var username = readFile(process.env.MONGO_INITDB_USER_USERNAME_FILE, "t");
+var userpwd = readFile(process.env.MONGO_INITDB_USER_PASSWORD_FILE, "t");
+var dbname = readFile(process.env.MONGO_DB_NAME, "t");
+            
+db = db.getSiblingDB(dbname);
+db.createUser({
+    user: username,
+    pwd: userpwd,
+    roles: [{ role: "readWrite", db: dbname }],
+});
+
+print("End Adding the User Roles.");

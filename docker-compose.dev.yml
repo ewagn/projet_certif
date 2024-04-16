@@ -1,0 +1,270 @@
+version: "2.24"
+name: isearch_app
+
+services:
+  db_init:
+    # env_file:
+    #   - path: ./db_init/db.env
+    #     required: true
+    environment:
+      - SQL_CERTIF_PATH=${SQL_CERTIF_PATH}
+      - CLIENT_CERTIF_PATH=${CLIENT_CERTIF_PATH}
+      - MADIADB_CONF_FILES=${MADIADB_CONF_FILES}
+      - MARIADB_LOG_USER_FILE=/run/secrets/mariadb_log_user
+      - MARIADB_LOG_PWD_FILE=/run/secrets/mariadb_log_pwd
+      - MARIADB_FOR_LOGS=${MARIADB_FOR_LOGS}
+      # - MONGODB_CERTIF_PATH=${MONGODB_CERTIF_PATH}
+      # - MONGODB_CONF_FILE=${MONGODB_CONF_FILE}
+    build: './db_init/'
+    secrets:
+      - mariadb_log_user
+      - mariadb_log_pwd
+    volumes:
+      - ./certifs/mariadb/server:${SQL_CERTIF_PATH}:z
+      - ./certifs/mariadb/client:${CLIENT_CERTIF_PATH}:z
+      - type: volume
+        source: mariadb_conf
+        target: ${MADIADB_CONF_FILES}
+      - type: volume
+        source: mariadb_init
+        target: /mariadb_init
+      # - type: volume
+      #   source: mongodb_conf
+      #   target: ${MONGODB_CONF_FILE}
+      # - ./mongodb_init/create_user.sh:/mongodb/create_user.sh:z
+      # - ./certifs/mongodb:${MONGODB_CERTIF_PATH}:z
+      # - type: volume
+      #   source: mongodb_init
+      #   target: /mongodb/init
+    
+  mariadb:
+    image : mariadb:11.3
+    environment:
+      - MARIADB_ROOT_PASSWORD_FILE=/run/secrets/mariadb_root_pwd
+      - MARIADB_PASSWORD_FILE=/run/secrets/mariadb_mysql_pwd
+      - MARIADB_LOG_USER_FILE=/run/secrets/mariadb_log_user
+      - MARIADB_LOG_PWD_FILE=/run/secrets/mariadb_log_pwd
+      - MARIADB_FOR_LOGS=${MARIADB_FOR_LOGS}
+    env_file: 
+      - path: ./db_init/db.env
+        required: true
+    secrets:
+      - mariadb_root_pwd
+      - mariadb_mysql_pwd
+
+    depends_on:
+      db_init:
+        condition: service_completed_successfully
+    restart: always
+    ports:
+      - 3306:3306
+    volumes:
+      - type: volume
+        source: mariadb_data
+        target: /var/lib/mysql
+      - type: volume
+        source: mariadb_conf
+        target: /etc/mysql/mariadb.conf.d
+        # read_only: true
+      - ./certifs/mariadb/server:/etc/mysql/ssl:z
+      - mariadb_init:/docker-entrypoint-initdb.d:z
+    networks:
+      - sql-network
+        # ipv4_address: 10.3.0.3
+  
+  es-setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    volumes:
+      - type: bind
+        source: ./certifs/es
+        target: /usr/share/elasticsearch/config/certs
+    user: "0"
+    command: >
+      bash -c '
+        if [ x${ELASTIC_PASSWORD} == x ]; then
+          echo "Set the ELASTIC_PASSWORD environment variable in the .env file";
+          exit 1;
+        fi;
+        if [ ! -f config/certs/ca.zip ]; then
+          echo "Creating CA";
+          bin/elasticsearch-certutil ca --silent --pem -out config/certs/ca.zip;
+          unzip config/certs/ca.zip -d config/certs;
+        fi;
+        if [ ! -f config/certs/certs.zip ]; then
+          echo "Creating certs";
+          echo -ne \
+          "instances:\n"\
+          "  - name: es01\n"\
+          "    dns:\n"\
+          "      - es01\n"\
+          "      - es-network\n"\
+          "    ip:\n"\
+          "      - 127.0.0.1\n"\
+          > config/certs/instances.yml;
+          bin/elasticsearch-certutil cert --silent --pem -out config/certs/certs.zip --in config/certs/instances.yml --ca-cert config/certs/ca/ca.crt --ca-key config/certs/ca/ca.key;
+          unzip config/certs/certs.zip -d config/certs;
+        fi;
+        echo "Setting file permissions"
+        chown -R root:root config/certs;
+        find . -type d -exec chmod 750 \{\} \;;
+        find . -type f -exec chmod 640 \{\} \;;
+        echo "Waiting for Elasticsearch availability";
+        until curl -s --cacert config/certs/ca/ca.crt https://es01:9200 | grep -q "missing authentication credentials"; do sleep 30; done;
+        echo "All done!";
+      '
+    healthcheck:
+      test: ["CMD-SHELL", "[ -f config/certs/es01/es01.crt ]"]
+      interval: 1s
+      timeout: 5s
+      retries: 120
+    networks:
+      - es-network
+
+  es01:
+    depends_on:
+      es-setup:
+        condition: service_healthy
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    volumes:
+      - type: bind
+        source: ./certifs/es
+        target: /usr/share/elasticsearch/config/certs
+      - esdata01:/usr/share/elasticsearch/data
+    ports:
+      - ${ES_PORT}:9200
+    environment:
+      - node.name=es01
+      - cluster.name=${CLUSTER_NAME}
+      - cluster.initial_master_nodes=es01
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      #- ELASTIC_PASSWORD_FILE=/run/secrets/elasticsearch_pwd
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=true
+      - xpack.security.http.ssl.key=certs/es01/es01.key
+      - xpack.security.http.ssl.certificate=certs/es01/es01.crt
+      - xpack.security.http.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.key=certs/es01/es01.key
+      - xpack.security.transport.ssl.certificate=certs/es01/es01.crt
+      - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.license.self_generated.type=${LICENSE}
+    mem_limit: ${MEM_LIMIT}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s --cacert config/certs/ca/ca.crt https://es-network:9200 | grep -q 'missing authentication credentials'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+    networks:
+      - es-network
+
+  # mongodb:
+  #   image: mongo:7.0.7
+  #   depends_on:
+  #     db_init:
+  #       condition: service_completed_successfully
+  #   command: --config /etc/mongo/mongod.conf
+  #   environment:
+  #     - MONGO_INITDB_ROOT_USERNAME_FILE=/run/secrets/mongodb_root_name
+  #     - MONGO_INITDB_ROOT_PASSWORD_FILE=/run/secrets/mongodb_root_pwd
+  #     - MONGO_INITDB_USER_USERNAME_FILE=/run/secrets/mongodb_user_name
+  #     - MONGO_INITDB_USER_PASSWORD_FILE=/run/secrets/mongodb_user_pwd
+  #     - MONGO_DB_NAME=${MONGO_DB_NAME}
+  #   secrets:
+  #     - mongodb_root_name
+  #     - mongodb_user_name
+  #     - mongodb_root_pwd
+  #     - mongodb_user_pwd
+  #   volumes:
+  #     - mongodb_data:/data/db:z
+  #     - type: volume
+  #       source: mongodb_conf
+  #       target: /etc/mongo
+  #       # read_only: true
+  #     - type: volume
+  #       source: mongodb_init
+  #       target: /docker-entrypoint-initdb.d
+  #     - ./certifs/mongodb/server:/home/mongodb/ssl:z
+  #   ports:
+  #     - 27017:27017
+  #   networks:
+  #     - nosql-network
+    
+
+volumes:
+  # mariadb_cert:
+  #   driver: local
+  mariadb_conf:
+    driver: local
+  mariadb_data:
+    driver: local
+  mariadb_init:
+    driver: local
+  # client_ssl_cert:
+  #   driver: local
+  # es_certs:
+  #   driver: local
+  # mongodb_data:
+  #   driver: local
+  # mongodb_init:
+  #   driver: local
+  # mongodb_conf:
+  #   driver: local
+  # mongodb_ssl_cert:
+  #   driver: local
+  esdata01:
+    driver: local
+
+
+secrets:
+  mariadb_root_pwd:
+    file: './db_init/mariadb_root_pwd.txt'
+  mariadb_mysql_pwd:
+    file: './db_init/mariadb_mysql_pwd.txt'
+  mariadb_log_user:
+    file: './db_init/mariadb_log_user_name'
+  mariadb_log_pwd:
+    file:  './db_init/mariadb_log_user_pwd'
+  # mongodb_root_name:
+  #   file: ./mongodb_init/mongodb_root_name
+  # mongodb_user_name:
+  #   file: ./mongodb_init/mongodb_user_name
+  # mongodb_root_pwd:
+  #   file: ./mongodb_init/mongodb_root_pwd
+  # mongodb_user_pwd:
+  #   file: ./mongodb_init/mongodb_user_pwd
+  # elasticsearch_pwd:
+  #   file: './es_files/elasticsearch_pwd.txt'
+
+networks:
+  sql-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.3.0.0/16
+          gateway: 10.3.0.1
+          aux_addresses:
+            mariadb: 10.3.0.3
+  es-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.4.0.0/16
+          gateway: 10.4.0.1
+  # nosql-network:
+  #   driver: bridge
+  #   ipam:
+  #     config:
+  #       - subnet: 10.5.0.0/16
+  #         gateway: 10.5.0.1
+  #         aux_addresses:
+  #           mongodb: 10.5.0.3
