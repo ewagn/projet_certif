@@ -3,7 +3,6 @@ import asyncio
 from typing import List
 from dotenv import load_dotenv
 load_dotenv('.env')
-from pprint import pprint
 from datetime import datetime
 import os
 from pathlib import Path

@@ -112,6 +112,7 @@ class Document():
         lg.debug("Enrichissement du document selon les données bilbiographiques")
             
         self.doc_type = "pdf"
+        self.pdf_exists = None
 
         self.pdf        = self.__document_retrieve.pdf_file
         self.es_pdf_id  = None
@@ -130,14 +131,55 @@ class Document():
         # documents_parsing.add(task)
         # task.add_done_callback(documents_parsing.discard)
 
-        self.file_name = str(uuid.uuid1()) + ".pdf"
-        self.pdf_file_path = None
+        await self.check_if_pdf_exists_in_db()
+
+        if self.pdf_exists == False :
+            self.file_name = str(uuid.uuid1()) + ".pdf"
+            self.pdf_file_path = os.getenv("PDF_FS_PATH") + self.file_name
+            with open(self.pdf_file_path)
+
+
+    async def check_if_pdf_exists_in_db(self):
+        bool_query = list()
+
+        fields = {
+            "title" : {"query": self.title, "fuzziness": "AUTO"},
+            'issn'  : {"query": self.issn},
+            }
+        
+        for field in fields:
+            if getattr(self, field) :
+                bool_query.append({'match' : {field : fields[field]}})
+
+
+        if fields and len(fields) > 1 :
+            query_params = {
+                "bool" :    {
+                    "should" :  bool_query,
+                    "minimum_should_match" : 1,
+                }
+            }
+        elif fields :
+            query_params = fields[0]
+        
+        else :
+            return None
+
+        sort_order = ["_score"]
+        result = self.es.search(index='pdf_files', query=query_params, sort=sort_order)
+        results = result['hits']['hits']
+        if results :
+            self.es_pdf_id = results[0]["_id"]
+            self.pdf_exists = True
+        else :
+            self.pdf_exists = False
 
     @ToThreadPool
     async def __parse_pdf_file(self):
 
         parsed_pdf = await PDFParser().parse(pdf_file=self.__document_retrieve.pdf_file)
         self.paragraphs = parsed_pdf.paragraphs
+
 
     async def __get_document_paragraphs(self):
         infos = {
