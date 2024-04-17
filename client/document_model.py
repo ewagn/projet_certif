@@ -84,6 +84,7 @@ class Document():
             instance.database = database
             instance.created_on = search.created_on
             instance.user_query = search.user_query
+            instance.index = search.search_index
 
             instance.__document_retrieve = document_retrieve
             lg.debug(f"Le docuement est crée.")

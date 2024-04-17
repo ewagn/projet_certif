@@ -1,7 +1,7 @@
 import logging as lg
 from logging import StreamHandler, FileHandler, DEBUG, WARNING
 
-from client.loggiging_models import ClientFilter, console_formatter, SQLHandler
+from client.logging_models import ClientFilter, console_formatter, SQLHandler
 
 root_logger = lg.getLogger('')
 root_logger.setLevel(DEBUG)

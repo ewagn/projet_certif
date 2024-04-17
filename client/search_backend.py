@@ -4,12 +4,13 @@ from typing import Any
 from datetime import datetime
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+# from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from client.elasticsearch_backend import Search, es_search
 from client.sci_bases_handlers import ScholarHandler
 from client.sql_models import SearchResults
-from client.sql_backend import engine
+from client.sql_backend import AppDB
 
 class QueryNERExtractor():
     __nlp = spacy.load("en_core_sci_lg")
@@ -45,6 +46,7 @@ class ScientificSearch():
     __scientific_online_databases = {
         "google scholar" : ScholarHandler
     } 
+    __sql_database = None
 
     def __init__(self) -> None:
 
@@ -73,7 +75,7 @@ class ScientificSearch():
 
         self.search_prompt = prompt
         self.search_keywords = await QueryNERExtractor().analyze_prompt(query=prompt)
-        self.search_index = datetime.now().strftime(format="%Y%m%d%H%M") + "-".join(self.search_keywords.list_of_keywords())
+        self.search_index = datetime.now().strftime(format="%Y%m%d%H%M") + "-".join(await self.search_keywords.list_of_keywords())
 
         await es_search.create_index(index_name=self.search_index)
 
@@ -82,6 +84,8 @@ class ScientificSearch():
         await self.__record_search()
 
     async def __record_to_database(self, search_pltf:str, date_of_search, user_id:int=None):
+        if not self.__sql_database:
+            self.__sql_database = await AppDB().create_app_db()
         search = SearchResults(
             search_index        = self.search_index
             ,date_of_search     = date_of_search
@@ -91,7 +95,7 @@ class ScientificSearch():
         if user_id :
             search.user_id = user_id
         
-        with Session(engine) as session:
+        async with AsyncSession(self.__sql_database.sql_engine) as session:
             session.add(search)
             session.commit()
 

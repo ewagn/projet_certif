@@ -3,13 +3,14 @@ from typing import List
 from sqlalchemy import ForeignKey
 from sqlalchemy import String, DateTime, Integer
 from sqlalchemy.types import BLOB
+from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
-class Base(DeclarativeBase):
+class Base(AsyncAttrs, DeclarativeBase):
     pass
 
 class User(Base):
@@ -54,6 +55,7 @@ class Logs (LogsBase):
     id              :   Mapped[int] = mapped_column(primary_key=True)
     time_stamp      :   Mapped[datetime] = mapped_column(DateTime())
     logger          :   Mapped[str] = mapped_column(String(250))
+    file_moduel     :   Mapped[str] = mapped_column(String(250))
     msg_cat         :   Mapped[str] = mapped_column(String(8))
     line            :   Mapped[int] = mapped_column(Integer())
     msg             :   Mapped[str] = mapped_column(BLOB())

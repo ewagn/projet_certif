@@ -1,4 +1,5 @@
-from sqlalchemy import URL, create_engine
+from sqlalchemy import URL
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 import os
 
 from dotenv import load_dotenv
@@ -30,12 +31,30 @@ sql_url = URL.create(
     port=3306,
     database=os.getenv("MARIADB_DATABASE"),
 )
+class AppDB():
+    sql_engine = None
 
-engine = create_engine(
-    url=sql_url
-    , connect_args=connect_args
-)
-Base.metadata.create_all(engine)
+    def __init__(self) -> None:
+        pass
+    
+    @classmethod
+    async def create_app_db(cls):
+        self = cls()
+        if not self.sql_engine :
+            self.sql_engine = await self.get_sql_engine_app_db()
+        
+        return self
+
+
+    async def get_sql_engine_app_db():
+
+        engine = await create_async_engine(
+            url=sql_url
+            , connect_args=connect_args
+        )
+        Base.metadata.create_all(engine)
+        return engine
+
 
 sql_logs_url = URL.create(
     drivername="mariadb+pymysql",
@@ -45,8 +64,26 @@ sql_logs_url = URL.create(
     port=3306,
     database=os.getenv("MARIADB_FOR_LOGS"),
 )
-logs_engine = create_engine(
-    url=sql_logs_url
-    , connect_args=connect_args
-)
-LogsBase.metadata.create_all(logs_engine)
+
+class LogsDB():
+    logs_engine = None
+
+    def __init__(self) -> None:
+        pass
+
+    @classmethod
+    async def create_logs_engine(cls):
+        self = cls()
+        if not self.logs_engine:
+            self.logs_engine = await self.get_sql_engine_logs_db()
+        
+        return self
+
+    async def get_sql_engine_logs_db():
+
+        logs_engine = await create_async_engine(
+            url=sql_logs_url
+            , connect_args=connect_args
+        )
+        LogsBase.metadata.create_all(logs_engine)
+        return logs_engine
