@@ -1,4 +1,5 @@
-from sqlalchemy import URL
+from sqlalchemy import URL, create_engine
+from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 import os
 
@@ -68,22 +69,21 @@ sql_logs_url = URL.create(
 class LogsDB():
     logs_engine = None
 
-    def __init__(self) -> None:
-        pass
-
-    @classmethod
-    async def create_logs_engine(cls):
-        self = cls()
+    def __init__(self, func) -> None:
+        self._func = func
         if not self.logs_engine:
-            self.logs_engine = await self.get_sql_engine_logs_db()
-        
-        return self
+            self.logs_engine =  self.get_sql_engine_logs_db()
 
-    async def get_sql_engine_logs_db():
+    def get_sql_engine_logs_db():
 
-        logs_engine = await create_async_engine(
+        logs_engine = create_engine(
             url=sql_logs_url
             , connect_args=connect_args
         )
         LogsBase.metadata.create_all(logs_engine)
         return logs_engine
+    
+    def __call__(self, *args: os.Any, **kwds: os.Any) -> os.Any:
+        with Session(self.logs_engine) as session :
+            result = self._func(session=session, *args, **kwds)
+        return result

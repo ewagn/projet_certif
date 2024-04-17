@@ -137,7 +137,8 @@ class Document():
         if self.pdf_exists == False :
             self.file_name = str(uuid.uuid1()) + ".pdf"
             self.pdf_file_path = os.getenv("PDF_FS_PATH") + self.file_name
-            with open(self.pdf_file_path)
+            with open(self.pdf_file_path, mode="wb+") as file:
+                file.write(self.pdf)
 
 
     async def check_if_pdf_exists_in_db(self):
