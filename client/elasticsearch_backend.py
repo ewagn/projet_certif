@@ -1,44 +1,51 @@
 from elasticsearch import AsyncElasticsearch
-import asyncio
-from typing import List
+from logging import getLogger
+from typing import Generator
 from dotenv import load_dotenv
 load_dotenv('.env')
-from datetime import datetime
 import os
-from pathlib import Path
-
 
 from client.document_model import Document
 
-class Search():
-    instances = 0
-    es = AsyncElasticsearch(
-        hosts=[{'host': 'localhost', 'port': 9200, 'scheme': 'https'}],
-        ssl_assert_hostname='es01',
-        basic_auth=('elastic', os.getenv('ELASTIC_PASSWORD')),
-    # cert_reqs="CERT_REQUIRED",
-        ca_certs="./certifs/es/ca/ca.crt")
-    
-    
+lg = getLogger("app")
 
+class ESHandler():
+    instances = 0
+    es = None
     __is_pdf_index = None
     
-    
     def __init__(self) -> None:
+        pass
+
+    @classmethod
+    async def create_handler(cls) :
+
+        self = cls()
+        if self.es == None or self.instances == 0:
+            await self.__create_es_resource()
+
         self.instances += 1
-        # client_info = self.es.info()
-        print("Connected to Elasticsearch !")
-        # pprint(client_info)
-        self.pdf_index = ""
+
+    async def __create_es_resource(self):
+        
+            self.es = AsyncElasticsearch(
+                hosts=[{'host': 'localhost', 'port': 9200, 'scheme': 'https'}],
+                ssl_assert_hostname='es01',
+                basic_auth=('elastic', os.getenv('ELASTIC_PASSWORD')),
+            # cert_reqs="CERT_REQUIRED",
+                ca_certs="./certifs/es/ca/ca.crt")
+
+            await self.es.info()
+            lg.info("La connexion à la base de données ElasticSearch est établie.")
     
     async def __create_pdf_index(self):
         is_pdf_index_exists = await self.es.indices.exists(index="pdf_files")
         if not is_pdf_index_exists :
             await self.es.indices.create(index="pdf_files")
-            self.__is_pdf_index = True
-        
 
-    async def create_index(self, index_name):
+        lg.info("L'index de 'pdf_files' a été crée.")        
+
+    async def create_index(self, index_name:str, *args, **kwargs):
         await self.es.indices.delete(index=index_name, ignore_unavailable=True)
         mappings={
             'properties': {
@@ -51,35 +58,35 @@ class Search():
             }
         }
         await self.es.indices.create(index=index_name, mappings=mappings)
-        self.index = index_name
-    
-    async def __save_pdf_to_fs(self, document:Document):
-        path_string = os.getenv("PDF_FILES_PATH")
-        if not path_string :
-            path_string = "./pdf_files" 
-        pdf_folder_path = Path(path_string)
-        pdf_folder_path.mkdir(parents=True, exist_ok=True) 
-        pdf_file_name = document.file_name
-
-        with open(os.path.join(pdf_folder_path, pdf_file_name), mode="wb+") as pdf_file :
-            pdf_file.write(document.pdf)
+        lg.info(f"L'index {index_name} a été crée.")
         
-        document.pdf_file_path = os.path.join(pdf_folder_path, pdf_file_name)
+    
+    # async def save_pdf_to_fs(self, document:Document):
+    #     path_string = os.getenv("PDF_FILES_PATH")
+    #     if not path_string :
+    #         path_string = "./pdf_files"
+    #     pdf_folder_path = AsyncPath(path_string)
+    #     await pdf_folder_path.mkdir(parents=True, exist_ok=True) 
+    #     pdf_file_name = document.file_name
+    #     pdf_file_path = pdf_folder_path.joinpath(pdf_file_name)
+
+    #     async with aiofiles.open(pdf_file_path, mode="wb+") as pdf_file :
+    #         await pdf_file.write(document.pdf)
+        
+    #     document.pdf_file_path = str(pdf_file_path)
 
 
-    async def __check_if_pdf_exists(self, document:Document):
+    async def check_if_pdf_exists_in_db(self, document:Document):
 
         bool_query = list()
 
-        pdf_document = document.get_pdf()
-
         fields = {
-            "title" : {"query": pdf_document.get("title"), "fuzziness": "AUTO"},
-            'issn'  : {"query": pdf_document.get("issn")},
+            "title" : {"query": document.title, "fuzziness": "AUTO"},
+            'issn'  : {"query": document.issn},
             }
         
         for field in fields:
-            if field in pdf_document:
+            if getattr(document, field) :
                 bool_query.append({'match' : {field : fields[field]}})
 
 
@@ -97,77 +104,37 @@ class Search():
             return None
 
         sort_order = ["_score"]
-        result = self.es.search(index='pdf_files', query=query_params, sort=sort_order)
+        result = await self.es.search(index='pdf_files', query=query_params, sort=sort_order)
         results = result['hits']['hits']
         if results :
             document.es_pdf_id = results[0]["_id"]
-            return True
+            document.pdf_exists = True
         else :
-            return False
+            lg.debug("Le PDF n'a pas été retrouvé dans la base de donnée")
+            document.pdf_exists = False
         
-    async def __add_pdf(self, document:Document, created_on:datetime):
-        self.__save_pdf_to_fs(document=document)
-        pdf_doc = document.get_pdf()
-        pdf_doc.update({
-            "created_on"    :   created_on,
-        })
-        insert_result = self.es.index(index='pdf_files', document=pdf_doc)
-        pdf_id = insert_result["_id"]
-        if pdf_id :
-            document.es_pdf_id = pdf_id
-        else :
-            e_text = "L'insertion du fichier PDF dans l'index pdf_files à échoué"
-            raise ConnectionError(e_text)
+    # async def __add_pdf(self, document:Document, created_on:datetime):
+    #     self.__save_pdf_to_fs(document=document)
+    #     pdf_doc = document.get_pdf()
+    #     pdf_doc.update({
+    #         "created_on"    :   created_on,
+    #     })
+    #     insert_result = await self.es.index(index='pdf_files', document=pdf_doc)
+    #     pdf_id = insert_result["_id"]
+    #     if pdf_id :
+    #         document.es_pdf_id = pdf_id
+    #     else :
+    #         e_text = "L'insertion du fichier PDF dans l'index pdf_files à échoué"
+    #         raise ConnectionError(e_text)
 
-    async def add_documents(self, query_string:str, documents:List[Document], created_on:datetime, index:str=None):
+    async def add_documents(self, documents:Generator):
         if not self.__is_pdf_index:
-            self.__create_pdf_index()
-
-        if not index:
-            index = self.index
-        
-        if not isinstance(index, str):
-            e_text = f"L'index doit être une string"
-            raise ValueError(e_text)
-        
-        if not isinstance(documents, list):
-            e_text = f"Le document doit être une liste de Document"
-            raise ValueError(e_text)
-
-        operations = list()
-
-        for document in documents:
-            if document.doc_type == 'pdf':
-                if not self.__check_if_pdf_exists(document):
-                    self.__add_pdf(document=document, created_on=created_on)
-
-            for paragraph in document():
-
-                paragraph.update({
-                    "created_on"    :   created_on
-                })
-
-                paragraph.update({
-                    "user_query"    :   query_string,
-                })
-
-                doc_content = paragraph.get("content", None)
-                if doc_content:
-                    paragraph.update({
-                        "embedding" :   self.__text_embedding.embedded(doc_content),
-                    })
-
-                operations.append({
-                    'index' :   {'_index'   :   index}
-                })
-
-                operations.append(paragraph)
+            await self.__create_pdf_index()
     
-        return await self.es.bulk(operations=operations, refresh='true')
+        return await self.es.bulk(operations=documents, refresh='true')
     
     def __del__(self):
         if self.instances == 1:
             self.es.close()
+            self.es = None
         self.instances += -1
-
-es_search = Search()

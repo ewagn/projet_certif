@@ -1,8 +1,9 @@
 from random import random, randrange
 from typing import Optional
 import time
+import asyncio
 
-def wait_rand(size:Optional[str] = None):
+async def wait_rand(size:Optional[str] = None):
     if size == "small":
         start = 1
         end = 3
@@ -18,4 +19,4 @@ def wait_rand(size:Optional[str] = None):
     time_to_wait = random() * factor
     time_to_wait += randrange(start, end, 1)
 
-    time.sleep(time_to_wait)
+    await asyncio.sleep(time_to_wait)

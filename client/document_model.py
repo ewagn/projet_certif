@@ -1,189 +1,129 @@
 from logging import getLogger
 from asyncio import TaskGroup
 from typing import Any
-from bs4.element import Tag
 import textdistance
 import nltk
 import unidecode
 from copy import copy
-# import requests
-# from bs4 import BeautifulSoup
-# from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-# from xvfbwrapper import Xvfb
 import rispy
 import fitz
 import string as str_cst
 import re
 import os
-from pathlib import Path
+import aiofiles
+from aiopath import AsyncPath
 import uuid
+from datetime import datetime
 
-from client.random_wait import wait_rand
+from client.elasticsearch_backend import ESHandler
 from client.async_backend import ToThreadPool
-from client.search_backend import es_search
 from client.text_pretreatment import text_embedding
 
-lg = getLogger(__name__)
+lg = getLogger("app")
 
 
 
 class Document():
 
-    # def __new__(cls, document_extract:Tag, driver, database:str) :
-    #     lg.debug("Construction d'un nouveau document")
-    #     document_retrieve = DocumentRetriever(document_extract, driver)
-    #     if document_retrieve.pdf_file and document_retrieve.biblio_data :
-    #         instance = super().__new__(cls)
-    #         instance.database = database
-    #         instance.__document_retrieve = document_retrieve
-    #         lg.debug(f"Le docuement est crée.")
-    #         return instance  
-        
-    #     else:
-    #         lg.debug("La creation du document à échoué (absence de fichier pdf ou de référence bibliographiques).")
-    #         return None
+    def __init__(self, pdf_file, ris_file, database:str, created_on:datetime, user_query:str, search_index:str, *args, **kwargs) -> None:
+        self.doc_type = "pdf"
+        self.pdf_exists = None
+        self.paragraphs = None
+        self.es_pdf_id  = None
 
-    def __init__(self) -> None:
-        pass
-        # lg.debug("Enrichissement du document selon les données bilbiographiques")
-        
-        # self.doc_type = "pdf"
-
-        # self.pdf        = self.__document_retrieve.pdf_file
-        # self.es_pdf_id  = None
-        # self.type       = self.__document_retrieve.biblio_data.get("type_of_reference")
-        # self.title      = self.__document_retrieve.biblio_data.get("primary_title")
-        # self.authors    = self.__document_retrieve.biblio_data.get('first_authors')
-        # self.vol        = self.__document_retrieve.biblio_data.get('volume')
-        # self.j_name     = self.__document_retrieve.biblio_data.get('journal_name')
-        # self.nb         = self.__document_retrieve.biblio_data.get('number')
-        # self.pages      = "-".join([self.__document_retrieve.biblio_data.get('start_page', ""), self.__document_retrieve.biblio_data.get('end_page', "")])
-        # self.issn       = self.__document_retrieve.biblio_data.get('issn')
-        # self.pub_year   = self.__document_retrieve.biblio_data.get('publication_year')
-        # self.publisher  = self.__document_retrieve.biblio_data.get('publisher')
-
-        # self.file_name = str(uuid.uuid1()) + ".pdf"
-        # self.pdf_file_path = None
-
-        # parsed_pdf = PDFParser(pdf_file=self.__document_retrieve.pdf_file)
-        # self.paragraphs = parsed_pdf.paragraphs
-
-        # del self.__document_retrieve
+        self.database = database
+        self.created_on = created_on
+        self.user_query = user_query
+        self.index = search_index
+        self.pdf = pdf_file
+        self.ris_file = ris_file
 
 
     @classmethod
-    async def create_document(cls, database:str, search, document_extract:Tag, driver):
+    async def create_document(cls, pdf_file, ris_file, database:str, created_on:datetime, user_query:str, search_index:str, *args, **kwargs):
 
         lg.debug("Construction d'un nouveau document")
-        document_retrieve = DocumentRetriever(document_extract, driver)
 
-        if document_retrieve.pdf_file and document_retrieve.biblio_data :
-            instance = cls()
-            instance.database = database
-            instance.created_on = search.created_on
-            instance.user_query = search.user_query
-            instance.index = search.search_index
+        instance = cls(pdf_file, ris_file, database, created_on, user_query, search_index, *args, **kwargs)
 
-            instance.__document_retrieve = document_retrieve
-            lg.debug(f"Le docuement est crée.")
+        instance.__es_api = await ESHandler().create_handler()
+        
 
-            async with TaskGroup() as tg :
-                tg.create_task(instance.__populate_document())
-                tg.create_task(instance.__parse_pdf_file())
+        lg.debug(f"Le docuement est crée.")
 
-            # await instance.__populate_document()
+        async with TaskGroup() as tg:
+            ref_parsing = tg.create_task(instance.__parse_bibref())
+            pdf_parsing = tg.create_task(instance.__parse_pdf_file())
 
-            # await instance.__parse_pdf_file()
 
-            # parsed_pdf = PDFParser() (pdf_file=instance.__document_retrieve.pdf_file)
-            # instance.paragraphs = parsed_pdf.paragraphs
 
-            del instance.__document_retrieve
+        if  ref_parsing and pdf_parsing:
+            lg.info("Le document à été crée")
             return instance  
         
         else:
-            lg.debug("La creation du document à échoué (absence de fichier pdf ou de référence bibliographiques).")
+            lg.info("La creation du document à échoué (absence de fichier pdf ou de référence bibliographiques).")
             return None
 
-
-    async def __populate_document(self):
+    async def __parse_bibref(self):
 
         lg.debug("Enrichissement du document selon les données bilbiographiques")
-            
-        self.doc_type = "pdf"
-        self.pdf_exists = None
 
-        self.pdf        = self.__document_retrieve.pdf_file
-        self.es_pdf_id  = None
-        self.type       = self.__document_retrieve.biblio_data.get("type_of_reference")
-        self.title      = self.__document_retrieve.biblio_data.get("primary_title")
-        self.authors    = self.__document_retrieve.biblio_data.get('first_authors')
-        self.vol        = self.__document_retrieve.biblio_data.get('volume')
-        self.j_name     = self.__document_retrieve.biblio_data.get('journal_name')
-        self.nb         = self.__document_retrieve.biblio_data.get('number')
-        self.pages      = "-".join([self.__document_retrieve.biblio_data.get('start_page', ""), self.__document_retrieve.biblio_data.get('end_page', "")])
-        self.issn       = self.__document_retrieve.biblio_data.get('issn')
-        self.pub_year   = self.__document_retrieve.biblio_data.get('publication_year')
-        self.publisher  = self.__document_retrieve.biblio_data.get('publisher')
+        biblio = rispy.load(self.ris_file)
+        if biblio :
+            if isinstance(biblio, list) :
+                biblio = biblio[0]
 
-        # task : asyncio.Task = asyncio.create_task(self.__parse_pdf_file())
-        # documents_parsing.add(task)
-        # task.add_done_callback(documents_parsing.discard)
+            self.type       = biblio.get("type_of_reference")
+            self.title      = biblio.get("primary_title")
+            self.authors    = biblio.get('first_authors')
+            self.vol        = biblio.get('volume')
+            self.j_name     = biblio.get('journal_name')
+            self.nb         = biblio.get('number')
+            self.pages      = "-".join([biblio.get('start_page', ""), biblio.get('end_page', "")])
+            self.issn       = biblio.get('issn')
+            self.pub_year   = biblio.get('publication_year')
+            self.publisher  = biblio.get('publisher')
 
-        await self.check_if_pdf_exists_in_db()
+            lg.debug("Les données bibliographiques ont été récupérées.")
+            return True
 
-        if self.pdf_exists == False :
-            self.file_name = str(uuid.uuid1()) + ".pdf"
-            self.pdf_file_path = os.getenv("PDF_FS_PATH") + self.file_name
-            with open(self.pdf_file_path, mode="wb+") as file:
-                file.write(self.pdf)
-
-
-    async def check_if_pdf_exists_in_db(self):
-        bool_query = list()
-
-        fields = {
-            "title" : {"query": self.title, "fuzziness": "AUTO"},
-            'issn'  : {"query": self.issn},
-            }
-        
-        for field in fields:
-            if getattr(self, field) :
-                bool_query.append({'match' : {field : fields[field]}})
-
-
-        if fields and len(fields) > 1 :
-            query_params = {
-                "bool" :    {
-                    "should" :  bool_query,
-                    "minimum_should_match" : 1,
-                }
-            }
-        elif fields :
-            query_params = fields[0]
-        
         else :
-            return None
+            lg.debug("Les données bibliographiques n'ont pu être parsées")
+            return False
 
-        sort_order = ["_score"]
-        result = self.es.search(index='pdf_files', query=query_params, sort=sort_order)
-        results = result['hits']['hits']
-        if results :
-            self.es_pdf_id = results[0]["_id"]
-            self.pdf_exists = True
-        else :
-            self.pdf_exists = False
+    async def __save_pdf_to_fs(self):
 
-    @ToThreadPool
+        self.file_name = str(uuid.uuid1()) + ".pdf"
+        self.pdf_file_path = AsyncPath(os.getenv("PDF_FS_PATH")).joinpath(self.file_name)
+        await self.pdf_file_path.mkdir()
+        # self.pdf_file_path.mkdir(parents=True, exist_ok=True)
+
+        async with aiofiles.open(self.pdf_file_path, mode="wb+") as file:
+            await file.write(self.pdf)
+
+        lg.debug("Le fichier PDF est enregistré dans le FS.")
+
     async def __parse_pdf_file(self):
 
-        parsed_pdf = await PDFParser().parse(pdf_file=self.__document_retrieve.pdf_file)
-        self.paragraphs = parsed_pdf.paragraphs
+        parsed_pdf = await PDFParser().parse(pdf_file=self.pdf_file)
+
+        if parsed_pdf :
+            self.paragraphs = parsed_pdf.paragraphs
+
+            await self.__es_api.check_if_pdf_exists_in_db(document=self)
+
+            if self.pdf_exists == False :
+                await self.__save_pdf_to_fs()
+                
+            
+            lg.debug("les données du PDF ont été récupérées.")
+        else :
+            lg.info("Le PDF n'a pu être parsé.")
+            return False
 
 
-    async def __get_document_paragraphs(self):
+    async def get_document_paragraphs(self):
         infos = {
             "database"          :   self.database,
             "es_pdf_id"         :   self.es_pdf_id,
@@ -197,6 +137,8 @@ class Document():
             'issn'              :   self.issn,
             "publication_year"  :   self.pub_year,
             "publisher"         :   self.publisher,
+            "created_on"        :   self.created_on,
+            "user_query"        :   self.user_query
         }
 
         document = dict()
@@ -208,16 +150,23 @@ class Document():
                 })
         
         for paragraph in self.paragraphs :
-            document_out = copy(document)
+            document_copy = copy(document)
             p_text = paragraph.get("content", None)
-            if p_text:
+            if p_text and not "embedding" in paragraph:
                 paragraph.update({
                     "embedding" :   await text_embedding.embedded(p_text)
                 })
-            document_out.update(paragraph)
+            document_copy.update(paragraph)
+
+            document_out = {
+                "_index":   self.index,
+                "doc":      document_copy,
+            }
+
             yield document_out
-    
+
     async def get_pdf(self) -> dict | None :
+
         if self.pdf:
             infos = {
                 "database"          :   self.database,
@@ -232,6 +181,7 @@ class Document():
                 "publication_year"  :   self.pub_year,
                 "publisher"         :   self.publisher,
                 'pdf_file_path'     :   self.pdf_file_path,
+                "created_on"        :   self.created_on,
             }
             document = dict()
 
@@ -240,252 +190,40 @@ class Document():
                     document.update({
                         info    :   infos[info]
                     })
+
+
+            out_document = {
+                "_index":   "pdf_files",
+                "doc":      document,
+            }
             
-            return document
+            return out_document
         else :
             return None
 
-    def __call__(self, *args: Any, **kwds: Any) -> Any:
+    async def __call__(self, *args: Any, **kwds: Any) -> Any:
+        if self.pdf_exists == 'False':
+            yield self.get_pdf()
 
-        return self.__get_document_paragraphs()
-
-
-class DocumentRetriever():
-    def __init__(self, document_extract:Tag, driver) -> None:
-
-        lg.debug("Récupération des données du document.")
-
-        self.driver = driver
-
-        self.result_id = document_extract.attrs['data-cid']
-
-        self.__get_pdf_file_if_exist(document_extract = document_extract)
-
-        if self.pdf_file :
-            self.biblio_data = self.__get_bilio_info()
-
-
-    def __get_bilio_info(self) -> dict:
-
-        lg.debug("Récupération des données bibliographiques.")
-
-        try :
-            self.driver.find_element(by=By.XPATH, value=f"//div[@data-cid='{self.result_id}']//a[@aria-controls='gs_cit']").click()
-            wait_rand(size="small")
-            WebDriverWait(self.driver, 20.0).until(lambda d: self.driver.find_element(by=By.XPATH, value="//a[@class='gs_citi' and contains(., 'RefMan')]"))
-        except Exception as e:
-            e_text = f"Les données bibliogrqphiques n'ont pu être récupérées"
-            lg.error(e_text, exc_info=True)
-            return None
-
-        ris_citation = self.driver.find_element(by=By.XPATH, value="//a[@class='gs_citi' and contains(., 'RefMan')]")
-        # ris_citation = BeautifulSoup(ris_citation.get_attribute('outerHTML'), 'html.parser')
-        # ris_file_url = ris_citation.find("a", string="RefMan").get('href')
-        # ris_citation.find("a", string="RefMan").click()
-        if not ris_citation:
-            lg.warning('Le document ne possède par de références bibliographiques téléchargeables')
-            self.driver.find_element(by=By.XPATH, value=f"//div[@class='gs_md_d gs_md_ds gs_ttzi gs_vis']//a[@id='gs_cit-x']").click()
-            return None
-        ris_citation.click()
-        wait_rand(size="small")
-
-        # try:
-        dwl_dir = "/Users/etiennewagner/Documents/Reconversion/Licence IA/2eme_annee/projet_certif/client/temp"
-        files_in_temp = [f for f in os.listdir(dwl_dir) if os.path.isfile(os.path.join(dwl_dir, f))]
-        if files_in_temp :
-            ris_file = files_in_temp[0]
-            ris_file = os.path.join(dwl_dir, ris_file)
-            biblio = rispy.load(Path(ris_file))
-            os.remove(os.path.join(dwl_dir, ris_file))
-
-
-            # resp = requests.get(url=ris_file_url)
-        # except:
-        else :
-            e_text = f"Erreur de récupération des références bibliographiques, le téléchargement n'a pas eu lieu."
-            lg.error(e_text)
-            raise ConnectionError(e_text)
-        self.driver.find_element(by=By.XPATH, value=f"//div[@class='gs_md_d gs_md_ds gs_ttzi gs_vis']//a[@id='gs_cit-x']").click()
-        wait_rand(size="small")
-        
-        # if 400 <= resp.status_code and resp.status_code < 500:
-        #     resp = requests.get(url=ris_file_url)
-
-        
-        # if 200 <= resp.status_code < 300:
-        #     biblio = rispy.loads(resp.content.decode(encoding='utf-8'))
-        #     wait_rand()
-        #     self.driver.find_element(by=By.XPATH, value=f"//div[@class='gs_md_d gs_md_ds gs_ttzi gs_vis']//a[@id='gs_cit-x']").click()
-        #     wait_rand()
-
-        # else :
-        #     e_text = f"Erreur lors de la récupération des données bibliographiques: code {resp.status_code}, reason {resp.reason}"
-        #     breakpoint()
-        #     raise RuntimeError(e_text)
-        
-        if biblio :
-            if isinstance(biblio, list) :
-                biblio = biblio[0]
-                
-            return biblio
-        else :
-            return None
-    
-    # def __download_pdf_file_alternate(self, url):
-    #     wd = create_webdriver(file_type_to_dowload="pdf")
-    #     wd.get(url=url)
-    #     wd.close()
-    #     dwl_dir = "/Users/etiennewagner/Documents/Reconversion/Licence IA/2eme_annee/projet_certif/client/temp"
-    #     pdf_file = [f for f in os.listdir(dwl_dir) if os.path.isfile(os.path.join(dwl_dir, f))][0]
-    #     if pdf_file :
-    #         pdf_file = os.path.join(dwl_dir, pdf_file)
-    #         with open(Path(pdf_file), mode="rb") as pdf_local_file:
-    #             pdf = pdf_local_file.read()
-    #         os.remove(os.path.join(dwl_dir, pdf_file))
-    #         if pdf :
-    #             return pdf
-    #         else:
-    #             return None
-
-        ### Old Code
-        # resp = requests.get(url=wd.current_url)
-        # wd.close()
-        # wd.
-        # if 200 <= resp.status_code and resp.status_code < 300:
-        #     return resp.content
-        # elif resp.status_code == 404:
-        #     return None
-        # else :
-        #     e_text = f"Erreur lors du téléchargement du fichier pdf avec le méthode alternative : code {resp.status_code}, reason {resp.reason}"
-        #     breakpoint()
-        #     raise RuntimeError(e_text)
-
-    
-    def __download_pdf_file(self):
-
-        lg.info("Téléchargement du fichier PDF.")
-
-        try :
-            lg.debug("Suivi du lien de téléchargement.")
-            self.driver.find_element(by=By.XPATH, value=f"//a[@data-clk-atid='{self.result_id}']").click()
-            wait_rand()
-        except Exception as e :
-            e_text = "Erreur lors de la récupération du fichier PDF (ouverture du téléchargement)."
-            lg.error(e_text, exc_info=True)
-            return None
-
-        lg.debug("Recupération du fichier dans le dossier temporaire.")
-        dwl_dir = "/Users/etiennewagner/Documents/Reconversion/Licence IA/2eme_annee/projet_certif/client/temp"
-        files_in_temp = [f for f in os.listdir(dwl_dir) if os.path.isfile(os.path.join(dwl_dir, f))]
-        if files_in_temp :
-            pdf_file = files_in_temp[0]
-            if pdf_file :
-                pdf_file = os.path.join(dwl_dir, pdf_file)
-                
-                lg.debug("Lecture du fichier pdf.")
-                with open(Path(pdf_file), mode="rb") as pdf_local_file:
-                    pdf = pdf_local_file.read()
-                lg.debug("Suppression du fichier pdf du dossier temporaire.")
-                os.remove(os.path.join(dwl_dir, pdf_file))
-                if pdf :
-                    return pdf
-                else:
-                    return None
-        else :
-            return None
-
-        ### Old code
-
-        # try :
-        #     resp = requests.get(url=url)
-        # except Exception as e:
-        #     e_text = f"Erreur lors du téléchargement du fichier pdf"
-        #     raise RuntimeError(e_text) from e
-        
-        # if 200 <= resp.status_code and resp.status_code < 300:
-        #     return resp.content
-        # elif 400 <= resp.status_code and resp.status_code < 500 :
-        #     return self.__download_pdf_file_alternate(url=url)
-        # else:
-        #     breakpoint()
-        #     e_text = f"Erreur lors du téléchargement du fichier pdf : code {resp.status_code}, reason {resp.reason}"
-        #     raise RuntimeError(e_text)
-    
-    def __get_pdf_file_if_exist(self, document_extract:Tag):
-        
-        lg.info("Tentative de récupération du fichier PDF.")
-
-        is_pdf = None
-
-        lg.debug("Repérage du lien de téléchargement.")
-        pdf_block = document_extract.find("a", attrs={'data-clk-atid' : self.result_id})
-        if pdf_block :
-            pdf_tag = pdf_block.find("span", attrs={'class' : 'gs_ctg2'})
-            if pdf_tag :
-                pdf_tag = pdf_tag.text
-                if pdf_tag :
-                    if 'pdf' in pdf_tag.lower() :
-                        is_pdf = True
-
-        if is_pdf :
-            self.pdf_file = self.__download_pdf_file()
-        else :
-            lg.debug("Le lien de téléchagrement PDF est absent")
-            self.pdf_file = None
-
-
-        ### Old Code
-        # pdf_url = None
-        # pdf_block = document_extract.find("a", attrs={'data-clk-atid' : self.result_id})
-
-        # if pdf_block :
-        #     pdf_tag = pdf_block.find("span", attrs={'class' : 'gs_ctg2'})
-        #     if pdf_tag :
-        #         pdf_tag = pdf_tag.text
-        #         if pdf_tag :
-        #             if 'pdf' in pdf_tag.lower() :
-        #                 pdf_url = pdf_block.get('href')
-
-        # if pdf_url :
-        #     self.pdf_file = self.__download_pdf_file(url=pdf_url)
-        # else :
-        #     self.pdf_file = None
+        async for paragraph in self.get_document_paragraphs() :
+            yield paragraph
 
 class PDFParser():
     __tversky = textdistance.Tversky(ks=(1, 0.5))
     __stopwords = set(nltk.corpus.stopwords.words('english'))
     __english_words = set(nltk.corpus.words.words())
 
-    def __init__(self) -> None:
-        pass
-        
-        # lg.info("Initialisation de l'outil de parsing du PDF")
+    def __init__(self, pdf_file) -> None:
+        self.__file = pdf_file
 
-        # self.__file = pdf_file
-
-        # self.__toc_titles = None
-        # self.__toc_titles_hierarchy = None
-
-        # try :
-        #     self.__parsed_pdf = fitz.Document(stream=self.__file)
-        # except Exception as e :
-        #     error = e
-        #     breakpoint()
-
-        # self.__parse_toc()
-
-        # self.__parse_pdf()
+        self.__toc_titles = None
+        self.__toc_titles_hierarchy = None
     
     @classmethod
     async def parse(cls, pdf_file):
         lg.info("Initialisation de l'outil de parsing du PDF")
 
-        self = cls()
-
-        self.__file = pdf_file
-
-        self.__toc_titles = None
-        self.__toc_titles_hierarchy = None
+        self = cls(pdf_file)
 
         try :
             self.__parsed_pdf = fitz.Document(stream=self.__file)
@@ -496,6 +234,12 @@ class PDFParser():
         await self.__parse_toc()
 
         await self.__parse_pdf()
+
+        if self.paragraphs :
+            return self
+        
+        else :
+            return None
 
     async def __parse_toc(self):
 

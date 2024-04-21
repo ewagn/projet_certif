@@ -1,11 +1,16 @@
 from selenium import webdriver
 from typing import Optional
+import os
+from aiopath import AsyncPath
 
 async def create_webdriver():
     chrome_options = webdriver.ChromeOptions()
 
+    temp_folder = AsyncPath(os.getenv("TEMP_EMPL"))
+    await temp_folder.mkdir(parents=True, exist_ok=True)
+
     prefs = {
-        "download.default_directory" : "/Users/etiennewagner/Documents/Reconversion/Licence IA/2eme_annee/projet_certif/client/temp",
+        "download.default_directory" : str(temp_folder),
         'download.prompt_for_download': False,
         'plugins.always_open_pdf_externally': True,
         # "plugins.plugins_disabled" : "Chrome PDF Viewer",
