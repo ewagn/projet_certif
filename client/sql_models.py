@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import List
-from sqlalchemy import ForeignKey
+from sqlalchemy import ForeignKey, Table, Column
 from sqlalchemy import String, DateTime, Integer
 from sqlalchemy.types import BLOB
 from sqlalchemy.ext.asyncio import AsyncAttrs
@@ -37,15 +37,34 @@ class Address(Base):
     def __repr__(self) -> str:
         return f"Address(id={self.id!r}, email_address={self.email_address!r})"
 
+m2m_paragraph_table = Table(
+    "mtm_association_pargraph_table"
+    , Base.metadata
+    , Column("serches", ForeignKey("search.id"), primary_key=True)
+    , Column("paragprahs", ForeignKey("generated_paragaphs.id"), primary_key=True)
+)
+
 class SearchResults(Base):
     __tablename__ = "search"
-    id              :   Mapped[int] = mapped_column(primary_key=True)
-    search_index    :   Mapped[str] = mapped_column(String(250))
-    date_of_search  :   Mapped[datetime] = mapped_column(DateTime())
+    id                      :   Mapped[int] = mapped_column(primary_key=True)
+    search_index            :   Mapped[str] = mapped_column(String(250))
+    date_of_search          :   Mapped[datetime] = mapped_column(DateTime())
     # research_type   :   Mapped[str] = mapped_column(String(3))
-    search_platform :   Mapped[str] = mapped_column(String(3)) ### WEB or API
-    user_id         :   Mapped[int | None] = mapped_column(ForeignKey("user_account.id"))
-    user            :   Mapped[User | None] = relationship(back_populates="search")
+    search_platform         :   Mapped[str] = mapped_column(String(3)) ### WEB or API
+    user_id                 :   Mapped[int | None] = mapped_column(ForeignKey("user_account.id"))
+    user                    :   Mapped[User | None] = relationship(back_populates="search")
+    generated_paragrpahs    :   Mapped[List[GeneratedParagraphs]] = relationship(secondary=m2m_paragraph_table, back_populates="searchs")
+
+
+
+class GeneratedParagraphs(Base):
+    __tablename__ = "generated_paragaphs"
+    id                          :   Mapped[int] = mapped_column(primary_key=True)
+    generated_pargraphs_es_id   :   Mapped[str] = mapped_column(String(250))
+    noted                       :   Mapped[int | None] = mapped_column(Integer())
+    searchs                     :   Mapped[List[SearchResults]] = relationship(secondary=m2m_paragraph_table, back_populates="generated_paragrpahs")
+
+    
 
 class LogsBase(DeclarativeBase):
     pass
@@ -55,7 +74,7 @@ class Logs (LogsBase):
     id              :   Mapped[int] = mapped_column(primary_key=True)
     time_stamp      :   Mapped[datetime] = mapped_column(DateTime())
     logger          :   Mapped[str] = mapped_column(String(250))
-    file_moduel     :   Mapped[str] = mapped_column(String(250))
+    file_module     :   Mapped[str] = mapped_column(String(250))
     msg_cat         :   Mapped[str] = mapped_column(String(8))
     line            :   Mapped[int] = mapped_column(Integer())
     msg             :   Mapped[str] = mapped_column(BLOB())
