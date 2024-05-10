@@ -1,3 +1,4 @@
+from asyncio import sleep
 from elasticsearch import AsyncElasticsearch
 from logging import getLogger
 from typing import Generator
@@ -34,9 +35,55 @@ class ESHandler():
                 basic_auth=('elastic', os.getenv('ELASTIC_PASSWORD')),
             # cert_reqs="CERT_REQUIRED",
                 ca_certs="./certifs/es/ca/ca.crt")
+            
+            if not await self.__check_if_elser_model_install():
+                await self.__setup_elser_model()
+                await self.__create_elser_pipeline()
 
             await self.es.info()
             lg.info("La connexion à la base de données ElasticSearch est établie.")
+
+    async def __check_if_elser_model_install(self):
+        is_install = await self.es.ml.get_trained_models(
+            model_id=".elser_model_2"
+        )
+        if not is_install["trained_model_configs"]:
+            return False
+        else:
+            return True
+    
+    async def __create_elser_pipeline(self):
+        await self.es.ingest.put_pipeline(
+            id="elser-ingest-pipeline",
+            description="Ingest pipeline for ELSER",
+            processors=[
+                {
+                    "inference": {
+                        "model_id": ".elser_model_2",
+                        "input_output": [
+                            {"input_field": "content",
+                             "output_field": "content_embedding"}
+                        ],
+                    }
+                }
+            ],
+        )
+
+    async def __setup_elser_model(self):
+        await self.es.ml.put_trained_model(
+            model_id=".elser_model_2"
+            , input={"fields_names" : ["text_field"]}
+        )
+
+        while True :
+            status = await self.es.ml.get_trained_models(
+                model_id=".elser_model_2"
+                , include="definition_status"
+            )
+            if status["trained_model_configs"][0]["fully_defined"] :
+                return True
+            else :
+                await sleep(5)
     
     async def __create_pdf_index(self):
         is_pdf_index_exists = await self.es.indices.exists(index="pdf_files")
@@ -47,17 +94,19 @@ class ESHandler():
 
     async def create_index(self, index_name:str, *args, **kwargs):
         await self.es.indices.delete(index=index_name, ignore_unavailable=True)
+        settings={"index": {"default_pipeline": "elser-ingest-pipeline"}},
         mappings={
             'properties': {
-                'embedding': {
-                    'type'          : 'dense_vector',
-                    'dims'           : 384,
-                    "index"         : True,
-                    "similarity"    : "dot_product",
-                }
+                "content": {
+                    "type": "text",
+                    "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
+                },
+                "content_embedding": {
+                    "type": "sparse_vector",
+                },
             }
         }
-        await self.es.indices.create(index=index_name, mappings=mappings)
+        await self.es.indices.create(index=index_name, settings=settings, mappings=mappings)
         lg.info(f"L'index {index_name} a été crée.")
         
     

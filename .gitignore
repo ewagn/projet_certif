@@ -160,3 +160,5 @@ cython_debug/
 #.idea/
 
 *_pwd.txt
+celery_exemple/
+text_sumary/models_llm
