@@ -14,11 +14,12 @@ from jose import JWTError, jwt
 from search_app.app.api.models import UserInDB, TokenData, User
 import search_app.core.databases.sql_async_backend as crud
 from search_app.core.databases.sql_async_backend import get_db, SessionLocal
+from search_app.core.databases.sql_backend import read_pwd_file
 # import search_app.core.databases.sql_async_models as sql_models
 
 
-SECRET_KEY = 'c94a644abcf412a66613c4db16344e3107898d004c819bc38a6fb794e2870396'
-# SECRET_KEY = os.getenv("SECRET_KEY")
+# SECRET_KEY = 'c94a644abcf412a66613c4db16344e3107898d004c819bc38a6fb794e2870396'
+SECRET_KEY = read_pwd_file(os.getenv("SECRET_KEY"))
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 12*60
@@ -52,7 +53,7 @@ async def authenticate_user(db : AsyncSession,  username: str, password: str):
         return False
     if not verify_password(password, user.password):
         return False
-    return User(user)
+    return user
 
 async def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
@@ -106,7 +107,7 @@ async def get_current_user(
                 headers={"WWW-Authenticate": authenticate_value},
             )
         
-    return User(user)
+    return User.model_validate(user)
 
 async def get_current_active_user(
     current_user: Annotated[User, Security(get_current_user, scopes=["me"])]

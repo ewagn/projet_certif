@@ -1,6 +1,6 @@
 from celery import Celery, Task
 from celery.utils.log import get_task_logger
-from logging import ERROR
+from logging import ERROR, DEBUG, getLogger, FileHandler, Logger
 
 from search_app.core.databases.elasticsearch_backend import ESHandler
 from search_app.core.databases.sql_backend import AppDB
@@ -8,14 +8,28 @@ from search_app.config import CeleryConf
 from search_app.core.services.text_summarize.engine import TextSummerize
 from search_app.core.logging.models import SQLHandler, AppFilter
 
-app = Celery()
+app = Celery('celery_worker')
 app.config_from_object(CeleryConf)
-app.autodiscover_tasks(['tasks.search', 'tasks.summerize', 'tasks.web_scrapping', 'tasks.paper_parser'])
 
-lg = get_task_logger(__name__)
+app.autodiscover_tasks(['search_app.tasks.search', 'search_app.tasks.summerize', 'search_app.tasks.web_scrapping', 'search_app.tasks.paper_parser'])
+
+fh = FileHandler(filename="./search_app/log_worker.log", mode="a")
+fh.setLevel(DEBUG)
 sql_handler = SQLHandler(level=ERROR)
 sql_handler.addFilter(AppFilter(name="app_filter"))
-lg.addHandler(sql_handler)
+
+root_logger = getLogger("")
+lg = get_task_logger(__name__)
+lg.propagate = True
+
+root_logger.addHandler(fh)
+root_logger.addHandler(sql_handler)
+
+# lg.addHandler(fh)
+# lg.addHandler(sql_handler)
+
+app.control.ping()
+
 
 class BaseTask(Task):
     _slq_db = None

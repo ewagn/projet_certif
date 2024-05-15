@@ -23,11 +23,13 @@ import search_app.app.api.security as sec
 from search_app.core.databases.sql_async_backend import get_db
 from search_app.core.services.search_api import APISearch
 
+
+
 @asynccontextmanager
 async def lifespan(app : FastAPI):
     async with async_engine.begin() as conn :
         await conn.run_sync(Base.metadata.create_all)
-    
+
     async_session = async_sessionmaker(async_engine, autoflush=False)()
 
     await crud.create_scopes_on_start(db=async_session)
@@ -215,7 +217,7 @@ async def delete_search_from_user(
     , db: AsyncSession = Depends(get_db)):
     db_user = await crud.get_user(db = db, user_id=current_user.id)
     
-    search = await crud.get_search_by_id_from_user(db =db, user=db_user, search_id=search_id)
+    search = await crud.get_search_by_id_from_user(db =db, user_id=current_user.id, search_id=search_id)
 
     if not search :
         raise HTTPException(status_code=status.HTTP_204_NO_CONTENT, detail='Search not found')
@@ -254,9 +256,11 @@ async def delete_user(
     if not db_user :
         raise HTTPException(status_code=404, detail='User not found')
     
-    await crud.delete_user(db=db, user=db_user)
-
-    return db_user
+    user = UserDeleted.model_validate(db_user)
+    
+    deleted = await crud.delete_user(db=db, user=db_user)
+    
+    return user
 
 
 @app.get("/users/{user_id}/searches/", response_model=list[Search], status_code=status.HTTP_200_OK)

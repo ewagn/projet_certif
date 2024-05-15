@@ -4,19 +4,18 @@ from selenium.webdriver import Chrome
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
 from bs4.element import Tag
-from bs4 import BeautifulSoup
-from xvfbwrapper import Xvfb
 import os
-from datetime import datetime
 
 import logging as lg
 
 from search_app.core.services.webscraping.random_wait import wait_rand
 
 class DocumentRetriever():
-    def __init__(self, document_extract:Tag, driver:Chrome) -> None:
+    def __init__(self, document_extract:Tag, driver:Chrome, temp_folder : Path) -> None:
 
         lg.debug("Récupération des données du document.")
+
+        self.temp_folder = temp_folder
 
         self.driver = driver
         self.document_extract = document_extract
@@ -58,7 +57,7 @@ class DocumentRetriever():
         ris_citation.click()
         wait_rand(size="small")
 
-        dwl_dir = Path(os.getenv("TEMP_EMPL"))
+        dwl_dir = self.temp_folder
         files_in_temp = [f for f in dwl_dir.iterdir() if f.is_file()]
         if files_in_temp :
             ris_file = files_in_temp[0]
@@ -93,7 +92,7 @@ class DocumentRetriever():
             return None
 
         lg.debug("Recupération du fichier dans le dossier temporaire.")
-        dwl_dir = Path(os.getenv("TEMP_EMPL"))
+        dwl_dir = self.temp_folder
         files_in_temp = [f for f in  dwl_dir.iterdir() if f.is_file()]
         if files_in_temp :
             pdf_file = files_in_temp[0]
@@ -135,118 +134,118 @@ class DocumentRetriever():
             self.pdf_file = None
 
 
-class ScholarHandler():
+# class ScholarHandler():
     
-    def __init__(self, database:str, created_on:datetime, user_query:str, search_index:str, query_terms:Iterable, nb_pages:int, *args, **kwargs) -> None:
-        lg.info("Création du moteur du scrapper google scholar.")
+#     def __init__(self, database:str, created_on:datetime, user_query:str, search_index:str, query_terms:Iterable, nb_pages:int, *args, **kwargs) -> None:
+#         lg.info("Création du moteur du scrapper google scholar.")
 
-        self.database = database
-        self.created_on = created_on
-        self.user_query = user_query
-        self.search_index = search_index
-        self.query_terms = query_terms
-        self.nb_pages = nb_pages
+#         self.database = database
+#         self.created_on = created_on
+#         self.user_query = user_query
+#         self.search_index = search_index
+#         self.query_terms = query_terms
+#         self.nb_pages = nb_pages
 
-        # self.search_params = search
-        self.documents = list()
+#         # self.search_params = search
+#         self.documents = list()
 
-        self.scholar_base_url = "https://scholar.google.com/scholar?hl=en&as_sdt=0%2C5"
+#         self.scholar_base_url = "https://scholar.google.com/scholar?hl=en&as_sdt=0%2C5"
     
-    def __enter__(self):
+#     def __enter__(self):
 
-        self.__vdisplay = Xvfb()
-        self.__vdisplay.start()
+#         self.__vdisplay = Xvfb()
+#         self.__vdisplay.start()
 
-        return self
+#         return self
     
-    def __axit__(self, *args, **kwargs):
+#     def __axit__(self, *args, **kwargs):
 
-        self.__vdisplay.stop()
+#         self.__vdisplay.stop()
 
-    def __get_research_pages_url(self, results_page:Tag):
+#     def __get_research_pages_url(self, results_page:Tag):
 
-        navigator = results_page.find("div", attrs={'id' : "gs_n", 'role' : "navigation"})
-        try :
-            pages = navigator.find_all("a", limit=self.nb_pages)
-        except Exception as e :
-            error = e
-            breakpoint()
+#         navigator = results_page.find("div", attrs={'id' : "gs_n", 'role' : "navigation"})
+#         try :
+#             pages = navigator.find_all("a", limit=self.nb_pages)
+#         except Exception as e :
+#             error = e
+#             breakpoint()
 
-        base_url = "https://scholar.google.com"
+#         base_url = "https://scholar.google.com"
 
-        return [ base_url + page.get("href") for page in pages]
+#         return [ base_url + page.get("href") for page in pages]
 
-    def __get_result_page_files(self, url: str | None, driver: Chrome | None):
+#     def __get_result_page_files(self, url: str | None, driver: Chrome | None):
         
-        if driver:
-            driver = driver
+#         if driver:
+#             driver = driver
 
-        elif not driver and url :
-            driver  = create_webdriver()
-            driver.get(url=url)
+#         elif not driver and url :
+#             driver  = create_webdriver()
+#             driver.get(url=url)
 
-        else :
-            e_text = "Il est nécéssaire d'avoir l'adresse de la page ou un navigateur ouvert sur cette pahge (driver)."
-            lg.error(e_text)
-            raise ValueError(e_text)
+#         else :
+#             e_text = "Il est nécéssaire d'avoir l'adresse de la page ou un navigateur ouvert sur cette pahge (driver)."
+#             lg.error(e_text)
+#             raise ValueError(e_text)
 
-        results_page = BeautifulSoup(self.driver.execute_script("return document.documentElement.outerHTML;"), 'html.parser')
-        results = results_page.find_all('div', attrs={'class' : "gs_r gs_or gs_scl"})
+#         results_page = BeautifulSoup(self.driver.execute_script("return document.documentElement.outerHTML;"), 'html.parser')
+#         results = results_page.find_all('div', attrs={'class' : "gs_r gs_or gs_scl"})
 
-        for result in results :
+#         for result in results :
 
-            extractor = DocumentRetriever(document_extract=result, driver=driver)
+#             extractor = DocumentRetriever(document_extract=result, driver=driver)
 
-            yield from extractor.get_files()
+#             yield from extractor.get_files()
 
-        driver.quit()
-        driver = None
+#         driver.quit()
+#         driver = None
 
-    async def __parse_page(self, url: Optional[str] | None, driver: Optional[Chrome] | None):
+#     async def __parse_page(self, url: Optional[str] | None, driver: Optional[Chrome] | None):
 
-        async with TaskGroup() as tg :
-            async for files in  self.__get_result_page_files(url, driver):
-                if files :
-                    self.documents.append(tg.create_task(Document().create_document(database="google scholar", created_on=self.created_on, user_query=self.user_query, search_index= self.search_index, **files)))
+#         async with TaskGroup() as tg :
+#             async for files in  self.__get_result_page_files(url, driver):
+#                 if files :
+#                     self.documents.append(tg.create_task(Document().create_document(database="google scholar", created_on=self.created_on, user_query=self.user_query, search_index= self.search_index, **files)))
 
 
-    def __get_documents_from_research(self):
+#     def __get_documents_from_research(self):
 
-        self.search_url = f"{self.scholar_base_url}&q={'+'.join(self.query_terms)}&btnG=''"
-        driver = create_webdriver()
-        driver.get(url = self.search_url)
-        results_page = BeautifulSoup(self.driver.execute_script("return document.documentElement.outerHTML;"), 'html.parser')
+#         self.search_url = f"{self.scholar_base_url}&q={'+'.join(self.query_terms)}&btnG=''"
+#         driver = create_webdriver()
+#         driver.get(url = self.search_url)
+#         results_page = BeautifulSoup(self.driver.execute_script("return document.documentElement.outerHTML;"), 'html.parser')
         
-        if self.nb_pages :
-            self.pages = self.__get_research_pages_url(results_page = results_page)
-        else :
-            self.pages = None
+#         if self.nb_pages :
+#             self.pages = self.__get_research_pages_url(results_page = results_page)
+#         else :
+#             self.pages = None
 
-        with TaskGroup() as tg :
+#         with TaskGroup() as tg :
 
-            tg.create_task(self.__parse_page(driver=driver))
+#             tg.create_task(self.__parse_page(driver=driver))
 
-            if self.pages :
-                for page in self.pages :
-                    tg.create_task(self.__parse_page(url=page))
+#             if self.pages :
+#                 for page in self.pages :
+#                     tg.create_task(self.__parse_page(url=page))
     
-    def search(self):
+#     def search(self):
         
-        if not isinstance(self.query_terms, Iterable) :
-            e_text = "Le paramètre query_terms doit être un iterable (liste, tuple, set ...) et non une chaine de caractère"
-            raise ValueError(e_text)
+#         if not isinstance(self.query_terms, Iterable) :
+#             e_text = "Le paramètre query_terms doit être un iterable (liste, tuple, set ...) et non une chaine de caractère"
+#             raise ValueError(e_text)
 
-        if not isinstance(self.nb_pages, int) or self.nb_pages < 0 :
-            e_text = f"Le paramètre nb_pages doit être un entier suppérieur à 0 : valeur entrée {self.nb_pages:s}"
-            raise ValueError(e_text)
+#         if not isinstance(self.nb_pages, int) or self.nb_pages < 0 :
+#             e_text = f"Le paramètre nb_pages doit être un entier suppérieur à 0 : valeur entrée {self.nb_pages:s}"
+#             raise ValueError(e_text)
 
-        self.__get_documents_from_research()
+#         self.__get_documents_from_research()
 
-    def get_documents(self):
-        if self.documents == None:
-            lg.warning("La recherche n'a pas été conduite ou n'a rapporté aucun documents.")
-            return None
-        else :
-            for document in self.documents :
-                for record in document():
-                    yield record
+#     def get_documents(self):
+#         if self.documents == None:
+#             lg.warning("La recherche n'a pas été conduite ou n'a rapporté aucun documents.")
+#             return None
+#         else :
+#             for document in self.documents :
+#                 for record in document():
+#                     yield record

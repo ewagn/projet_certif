@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, computed_field, ValidationError, ValidationInfo, field_validator
+from pydantic import BaseModel, Field, computed_field, ValidationError, ValidationInfo, field_validator, ConfigDict
 from datetime import datetime
 import os
 
@@ -21,7 +21,7 @@ class UserBase(BaseModel):
     def check_email(cls, v : str, info: ValidationInfo) -> str:
         if isinstance(v, str):
             is_email = "@" in v
-            assert is_email, f"{info.field_name} must contain a '@'"
+            assert is_email, f"{info.field_name} must contain a '@'."
         return v
     
 
@@ -32,18 +32,15 @@ class UserOut(UserBase):
     id                  : int
     scopes              : set[str]
     create_date         : datetime
-    desactivation_date  : datetime | None = None
+    desactivation_date  : datetime | None = None  
 
 class User(UserOut):
-
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class UserDeleted(UserOut):
-    deleted             : bool = True
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        orm_mode = True
+    deleted             : bool = True
 
 # class GeneratedParagraph(BaseModel):
 #     id                          : int
@@ -72,11 +69,10 @@ class SearchOneRetrieve(SearchBase):
 
 
 class SearchDeleted(SearchOneRetrieve):
+    model_config = ConfigDict(from_attributes=True)
+
     user_id                 : int
     deleted                 : bool = True
-
-    class Config:
-        orm_mode = True
 
 class Search(SearchOneRetrieve):
     user_id                 : int
@@ -86,12 +82,15 @@ class Search(SearchOneRetrieve):
 class SearchRequest(SearchBase):
     prompt          : str
     search_type     : str = "api"
+    search_platform : str = "google_scholar"
 
 class TaskBase(BaseModel):
     id      : str
     name    : str
 
 class TaskCreated(TaskBase):
+    model_config = ConfigDict(from_attributes=True)
+
     send_time       : datetime = datetime.now()
 
     @computed_field
@@ -100,17 +99,9 @@ class TaskCreated(TaskBase):
 
     # retrive_url     : str = Field()
 
-    class Config:
-        orm_mode = True
-
 
 class TaskResult(TaskBase):
+    model_config = ConfigDict(from_attributes=True)
+
     status  : str
     result  : Search | None = None
-
-    class Config:
-        orm_mode = True
-
-
-
-

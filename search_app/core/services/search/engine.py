@@ -1,5 +1,5 @@
 from typing import Any
-from celery import Task
+from search_app.celery_worker import Task
 import spacy
 from datetime import datetime
 

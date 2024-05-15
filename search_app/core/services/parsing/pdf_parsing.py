@@ -104,7 +104,7 @@ class Document():
     def __save_pdf_to_fs(self):
 
         self.file_name = str(uuid.uuid1()) + ".pdf"
-        self.pdf_file_path = Path(os.getenv("PDF_FS_PATH")).joinpath(self.file_name)
+        self.pdf_file_path = Path(os.getenv("PDF_FILES_PATH")).joinpath(self.file_name)
         self.pdf_file_path.mkdir()
         # self.pdf_file_path.mkdir(parents=True, exist_ok=True)
 

@@ -1,4 +1,4 @@
-version: "2.24"
+# version: '3.8'
 name: isearch_app
 
 services:
@@ -15,13 +15,17 @@ services:
       - MARIADB_FOR_LOGS=${MARIADB_FOR_LOGS}
       # - MONGODB_CERTIF_PATH=${MONGODB_CERTIF_PATH}
       # - MONGODB_CONF_FILE=${MONGODB_CONF_FILE}
-    build: './db_init/'
+    build:
+      dockerfile: ${DBINIT_VM_FILE}
+      args:
+        VM_IMG: ${DBINIT_VM_IMG}
+        VM_ENTRYPNT: ${DBINIT_VM_ENTRYPOIT_PATH}
     secrets:
       - mariadb_log_user
       - mariadb_log_pwd
     volumes:
-      - ./certifs/mariadb/server:${SQL_CERTIF_PATH}:z
-      - ./certifs/mariadb/client:${CLIENT_CERTIF_PATH}:z
+      - mariadb_serv_certifs:${SQL_CERTIF_PATH}:z
+      - mariadb_client_certifs:${CLIENT_CERTIF_PATH}:z
       - type: volume
         source: mariadb_conf
         target: ${MADIADB_CONF_FILES}
@@ -46,12 +50,11 @@ services:
       - MARIADB_LOG_PWD_FILE=/run/secrets/mariadb_log_pwd
       - MARIADB_FOR_LOGS=${MARIADB_FOR_LOGS}
     env_file: 
-      - path: ./db_init/db.env
+      - path: ./boot/db_init/db.env
         required: true
     secrets:
       - mariadb_root_pwd
       - mariadb_mysql_pwd
-
     depends_on:
       db_init:
         condition: service_completed_successfully
@@ -66,17 +69,34 @@ services:
         source: mariadb_conf
         target: /etc/mysql/mariadb.conf.d
         # read_only: true
-      - ./certifs/mariadb/server:/etc/mysql/ssl:z
-      - mariadb_init:/docker-entrypoint-initdb.d:z
+      - type: volume
+        source: mariadb_serv_certifs
+        target: /etc/mysql/ssl
+        read_only: true
+      - type: volume
+        source: mariadb_init
+        target: /docker-entrypoint-initdb.d
+        read_only: true
     networks:
       - sql-network
-        # ipv4_address: 10.3.0.3
+    healthcheck:
+      interval: 30s
+      retries: 3
+      test:
+        [
+          "CMD",
+          "healthcheck.sh",
+          "--su-mysql",
+          "--connect",
+          "--innodb_initialized"
+        ]
+      timeout: 30s
   
   es-setup:
     image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
     volumes:
-      - type: bind
-        source: ./certifs/es
+      - type: volume
+        source: certifs_es
         target: /usr/share/elasticsearch/config/certs
     user: "0"
     command: >
@@ -126,8 +146,8 @@ services:
         condition: service_healthy
     image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
     volumes:
-      - type: bind
-        source: ./certifs/es
+      - type: volume
+        source: certifs_es
         target: /usr/share/elasticsearch/config/certs
       - esdata01:/usr/share/elasticsearch/data
     ports:
@@ -166,6 +186,155 @@ services:
       retries: 120
     networks:
       - es-network
+
+  redis:
+    image: redis:latest
+    restart: on-failure
+    # expose:
+    #   - "${REDIS_PORT}"
+    ports:
+      - ${REDIS_PORT}:${REDIS_PORT}
+    command: redis-server --port "${REDIS_PORT}"
+    networks:
+      - worker-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+  
+  api:
+    build:
+      dockerfile: "${API_VM_FILE}"
+      args:
+        VM_BASE: "${API_VM_BASE}"
+        VM_USER: "${API_VM_USER}"
+        VM_HOME: "${API_VM_HOME}"
+        VM_CODE: "${API_VM_CODE}"
+        VM_HOST_PIP: "${API_HOST_PIP}"
+        PROJ_INIT_FOLD: "${API_PROJ_BASE}"
+    # command: /bin/sh ./entrypoint.sh
+    secrets:
+      - secret_api
+      - mariadb_mysql_pwd
+      - mariadb_log_user
+      - mariadb_log_pwd
+      - api_admin_username
+      - api_admin_pwd
+    env_file: 
+      - path: ./boot/db_init/db.env
+        required: true
+    volumes:
+      - type: volume
+        source: mariadb_client_certifs
+        target: ${SQL_CERTIF_PATH}
+        read_only: true
+      - certifs_es:${ES_VM_CERTIF_PATH}
+      - ./search_app:${API_VM_CODE}/search_app ### DEV
+    environment:
+      - API_PROJECT_ENTRYPOINT=${API_VM_PROJECT_APP}
+      - API_VM_PROJECT_APP=${API_VM_PROJECT_APP}
+      - API_SCOPES=${API_SCOPES}
+      - API_ENDPOINT=${API_ENDPOINT}
+      - SECRET_KEY=/run/secrets/secret_api
+      - API_ADMIN_USERNAME=/run/secrets/api_admin_username
+      - API_ADMIN_PWD=/run/secrets/api_admin_pwd
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - CLIENT_CERTIF_PATH=${SQL_CERTIF_PATH}
+      - MARIADB_PASSWORD_FILE=/run/secrets/mariadb_mysql_pwd
+      - MARIADB_LOG_USER_FILE=/run/secrets/mariadb_log_user
+      - MARIADB_LOG_PWD_FILE=/run/secrets/mariadb_log_pwd
+      - MARIADB_FOR_LOGS=${MARIADB_FOR_LOGS}
+      - CELERY_BROKER_TRANSPORT_URL="${CELERY_BROKER_URL}"
+      - CELERY_RESULT_TRANSPORT_BACKEND="${CELERY_RESULT_BACKEND}"
+      - ES_VM_CERTIF_PATH=${ES_VM_CERTIF_PATH}
+    depends_on:
+      db_init:
+        condition: service_completed_successfully
+      mariadb:
+        condition: service_healthy
+      es-setup:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+    networks:
+      - worker-network
+      - es-network
+      - sql-network
+    ports:
+      - 8000:8000
+
+  worker:
+    build:
+      dockerfile: "./boot/worker_init/Dockerfile"
+      args:
+        VM_BASE: "${WORKER_VM_BASE}"
+        VM_USER: "${WORKER_VM_USER}"
+        VM_HOME: "${WORKER_VM_HOME}"
+        VM_CODE: "${WORKER_VM_CODE}"
+        PROJ_INIT_FOLD: "${WORKER_PROJ_BASE}"
+      tags:
+        - "celery_worker:latest"
+    image: celery_worker:latest
+    # command: /bin/sh ./entrypoint.sh
+  #   restart: always
+    oom_kill_disable: true
+    secrets:
+      - mariadb_mysql_pwd
+      - mariadb_log_user
+      - mariadb_log_pwd
+    env_file: 
+      - path: ./boot/db_init/db.env
+        required: true
+    volumes:
+      - pdf_files:${PDF_FILES_PATH}
+      - type: volume
+        source: mariadb_client_certifs
+        target: ${SQL_CERTIF_PATH}
+        read_only: true
+      - certifs_es:${ES_VM_CERTIF_PATH}
+      - ./search_app:${WORKER_VM_CODE}/search_app
+    environment:
+      - PDF_FILES_PATH=${PDF_FILES_PATH}
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - CLIENT_CERTIF_PATH=${SQL_CERTIF_PATH}
+      - MARIADB_PASSWORD_FILE=/run/secrets/mariadb_mysql_pwd
+      - MARIADB_LOG_USER_FILE=/run/secrets/mariadb_log_user
+      - MARIADB_LOG_PWD_FILE=/run/secrets/mariadb_log_pwd
+      - MARIADB_FOR_LOGS=${MARIADB_FOR_LOGS}
+      - CELERY_BROKER_TRANSPORT_URL="${CELERY_BROKER_URL}"
+      - CELERY_RESULT_TRANSPORT_BACKEND="${CELERY_RESULT_BACKEND}"
+      - ES_VM_CERTIF_PATH=${ES_VM_CERTIF_PATH}
+    networks:
+      - worker-network
+      - es-network
+      - sql-network
+    healthcheck:
+      test: ["CMD-SHELL", "celery", "-A", "search_app.celery_worker", "inspect",  "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      db_init:
+        condition: service_completed_successfully
+      mariadb:
+        condition: service_healthy
+      es-setup:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      
+  # worker_0:
+  #   extends:
+  #     service: worker
+  
+  # worker_1:
+  #   extends:
+  #     service: worker
+      
+
 
   # mongodb:
   #   image: mongo:7.0.7
@@ -209,6 +378,24 @@ volumes:
     driver: local
   mariadb_init:
     driver: local
+  mariadb_serv_certifs:
+    driver: local
+    driver_opts:
+      device: ${PWD}${SERV_HOST_CERTIF_PATH}
+      o: bind
+      type: local
+  mariadb_client_certifs:
+    driver: local
+    driver_opts:
+      device: ${PWD}${CLIENT_HOST_CERTIF_PATH}
+      o: bind
+      type: local
+  pdf_files:
+    driver: local
+    driver_opts:
+      device: ${PWD}${PDF_FILES_PATH_HOST}
+      o: bind
+      type: local
   # client_ssl_cert:
   #   driver: local
   # es_certs:
@@ -221,19 +408,32 @@ volumes:
   #   driver: local
   # mongodb_ssl_cert:
   #   driver: local
+  certifs_es:
+    driver: local
+    driver_opts:
+      device: "${PWD}${ES_HOST_CERTIFS_PATH}"
+      o: bind
+      type: local
   esdata01:
     driver: local
 
 
+
 secrets:
   mariadb_root_pwd:
-    file: './db_init/mariadb_root_pwd.txt'
+    file: './boot/db_init/mariadb_root_pwd.txt'
   mariadb_mysql_pwd:
-    file: './db_init/mariadb_mysql_pwd.txt'
+    file: './boot/db_init/mariadb_mysql_pwd.txt'
   mariadb_log_user:
-    file: './db_init/mariadb_log_user_name'
+    file: './boot/db_init/mariadb_log_user_name'
   mariadb_log_pwd:
-    file:  './db_init/mariadb_log_user_pwd'
+    file:  './boot/db_init/mariadb_log_user_pwd'
+  secret_api:
+    file: './certifs/api/secure_secret.txt'
+  api_admin_username:
+    file: './certifs/api/admin_user_name'
+  api_admin_pwd:
+    file: './certifs/api/admin_user_pwd'
   # mongodb_root_name:
   #   file: ./mongodb_init/mongodb_root_name
   # mongodb_user_name:
@@ -260,6 +460,12 @@ networks:
       config:
         - subnet: 10.4.0.0/16
           gateway: 10.4.0.1
+  worker-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.2.0.0/16
+          gateway: 10.2.0.1
   # nosql-network:
   #   driver: bridge
   #   ipam:

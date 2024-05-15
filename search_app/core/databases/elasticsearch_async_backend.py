@@ -18,7 +18,7 @@ class ESHandler():
                 ssl_assert_hostname='es01',
                 basic_auth=('elastic', os.getenv('ELASTIC_PASSWORD')),
             # cert_reqs="CERT_REQUIRED",
-                ca_certs="./certifs/es/ca/ca.crt")
+                ca_certs=os.getenv("ES_VM_CERTIF_PATH") + "ca/ca.crt")
         return self._es
     
     @property

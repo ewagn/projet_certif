@@ -8,7 +8,7 @@ import os
 from typing import Any
 
 from search_app.core.services.vectorization.text_embedding import text_embedding
-from search_app.core.services.parsing.pdf_parsing import Document
+# from search_app.core.services.parsing.pdf_parsing import Document
 
 # lg = getLogger("app")
 
@@ -33,7 +33,7 @@ class ESHandler():
                 ssl_assert_hostname='es01',
                 basic_auth=('elastic', os.getenv('ELASTIC_PASSWORD')),
             # cert_reqs="CERT_REQUIRED",
-                ca_certs="./certifs/es/ca/ca.crt")
+                ca_certs=os.getenv("ES_VM_CERTIF_PATH") + "ca/ca.crt")
             
             if not self.__check_if_elser_model_install():
                 self.__setup_elser_model()
@@ -219,7 +219,7 @@ class ESHandler():
         self.es.indices.create(index=index_name, settings=settings, mappings=mappings)
         lg.info(f"L'index {index_name} a été crée.")
 
-    def check_if_pdf_exists_in_db(self, document:Document):
+    def check_if_pdf_exists_in_db(self, document):
 
         bool_query = list()
 

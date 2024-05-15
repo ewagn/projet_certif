@@ -86,7 +86,7 @@ class SearchResults(Base):
     search_platform         :   Mapped[str] = mapped_column(String(48))
     user_id                 :   Mapped[int | None] = mapped_column(ForeignKey("user_account.id", ondelete="cascade"))
     # user                    :   Mapped[User | None] = relationship(back_populates="search")
-    generated_paragraphs    :   Mapped[List['GeneratedParagraphs']] = relationship(back_populates="search")
+    generated_paragraphs    :   Mapped[List[GeneratedParagraphs]] = relationship(back_populates="search")
     # generated_paragrpahs    :   Mapped[List[GeneratedParagraphs]] = relationship(secondary=m2m_paragraph_table, back_populates="searchs")
     
     def to_dict(self) -> dict[str, Any]:
@@ -106,7 +106,7 @@ class GeneratedParagraphs(Base):
     generated_pargraphs_es_id   :   Mapped[str] = mapped_column(String(250))
     noted                       :   Mapped[int | None] = mapped_column(Integer())
     search_id                   :   Mapped[int] = mapped_column(ForeignKey("search.id"))
-    search                      :   Mapped['SearchResults'] = mapped_column(back_populates="generated_paragraphs")
+    search                      :   Mapped["SearchResults"] = relationship(back_populates="generated_paragraphs")
     # searchs                     :   Mapped[List[SearchResults]] = relationship(secondary=m2m_paragraph_table, back_populates="generated_paragrpahs")
 
     

@@ -2,7 +2,7 @@ from transformers import pipeline
 from transformers import PegasusForConditionalGeneration, PegasusTokenizer
 import string
 
-from search_app.core.services.text_summarize.models import SummerizedParagraph
+# from search_app.core.services.text_summarize.models import SummerizedParagraph
 
 class TextSummerize():
     _model_name = None

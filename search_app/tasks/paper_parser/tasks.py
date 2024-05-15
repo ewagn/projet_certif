@@ -1,8 +1,12 @@
 from datetime import datetime
-from celery import chain, group
+from celery import chain, group, chord
+from celery.utils.log import get_task_logger
+from logging import Logger
 
-from search_app.celery import app, lg
+from search_app.celery_worker import app
 from search_app.core.services.parsing.pdf_parsing import Document
+
+lg = get_task_logger(__name__)
 
 @app.task(bind=True)
 def create_documents_from_google_scholar(self, pdf_file:bytes, ris_file:str, created_on:datetime, user_query:str, search_index:str) -> Document | None :
@@ -22,24 +26,31 @@ def get_documents_paragraphs_for_put_on_db(documents = list[Document | None]) ->
     
     return documents_elements_to_put_on_db
 
-@app.task
-def parse_documents (papers:list[tuple[bytes, str]], user_query:str, search_index:str, created_on : datetime) -> list[Document] | None :
+@app.task(name='parse_documents')
+def parse_documents (papers : list[list[tuple[bytes, str]]], user_query:str, search_index:str, created_on : datetime, *args, **kwargs) -> list[Document | None] | None :
     
-    parsed_documents = group(
-            create_documents_from_google_scholar.s(pdf_file = pdf_file, ris_file = ris_file, created_on = created_on, user_query = user_query, search_index=search_index)
-            for pdf_file, ris_file in papers)()
+    parsing_documents_list = list()
 
-    parse_documents = [doc for doc in parse_documents.get() if doc]
-    return parsed_documents
+    for papers_list in papers:
+        for pdf_file, ris_file in papers_list :
+            parsing_documents_list.append(
+                create_documents_from_google_scholar.s(pdf_file = pdf_file, ris_file = ris_file, created_on = created_on, user_query = user_query, search_index=search_index)()
+            )
 
-@app.task
-def parse_documents_to_dict(papers : list[tuple[bytes, str]], user_query : str, search_index : str) -> list[dict[str, str]]:
-    created_on = datetime.now()
 
-    parsed_documents = (
-        group(
-            create_documents_from_google_scholar.s(pdf_file = pdf_file, ris_file = ris_file, created_on = created_on, user_query = user_query, search_index=search_index) 
-            for pdf_file, ris_file in papers)
-        | get_documents_paragraphs_for_put_on_db.s())()
+    result = group(parsing_documents_list)()
 
-    return parsed_documents
+    return result
+
+
+# @app.task
+# def parse_documents_to_dict(papers : list[tuple[bytes, str]], user_query : str, search_index : str) -> list[dict[str, str]]:
+#     created_on = datetime.now()
+
+#     parsed_documents = (
+#         chord(
+#             create_documents_from_google_scholar.s(pdf_file = pdf_file, ris_file = ris_file, created_on = created_on, user_query = user_query, search_index=search_index) 
+#             for pdf_file, ris_file in papers).s()
+#         | get_documents_paragraphs_for_put_on_db.s())
+
+#     return parsed_documents

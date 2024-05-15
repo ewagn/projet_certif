@@ -29,7 +29,7 @@ class User(Base):
     password            :   Mapped[str] = mapped_column(String(264))
     firstname           :   Mapped[str | None] = mapped_column(String(30))
     lastname            :   Mapped[str | None] = mapped_column(String(30))
-    role                :   Mapped[List[Role]] = relationship(secondary=role_association_table)
+    role                :   Mapped[list[Role]] = relationship(secondary=role_association_table, lazy="joined")
     create_date         :   Mapped[datetime] = mapped_column(insert_default=func.now())
     desactivation_date  :   Mapped[datetime | None] = mapped_column(DATETIME())
     search              :   WriteOnlyMapped["SearchResults"] = relationship(
@@ -50,7 +50,7 @@ class User(Base):
             return None
     
     def __repr__(self) -> str:
-        return f"User(id={self.id!r}, name={self.name!r}, fullname={self.fullname!r})"
+        return f"User(id={self.id!r}, name={self.email!r}, fullname={self.firstname!r} {self.lastname!r})"
 
 
 class Role(Base):
@@ -67,7 +67,7 @@ class SearchResults(Base):
     search_type             :   Mapped[str] = mapped_column(String(3)) ### WEB or API
     search_platform         :   Mapped[str] = mapped_column(String(48))
     user_id                 :   Mapped[int | None] = mapped_column(ForeignKey("user_account.id", ondelete="cascade"))
-    generated_paragraphs    :   Mapped[List['GeneratedParagraphs']] = relationship(back_populates="search")
+    generated_paragraphs    :   Mapped[List['GeneratedParagraphs']] = relationship(back_populates="search", lazy="joined")
 
 
 class GeneratedParagraphs(Base):
@@ -76,6 +76,6 @@ class GeneratedParagraphs(Base):
     generated_pargraphs_es_id   :   Mapped[str] = mapped_column(String(250))
     noted                       :   Mapped[int | None] = mapped_column(Integer())
     search_id                   :   Mapped[int] = mapped_column(ForeignKey("search.id"))
-    search                      :   Mapped['SearchResults'] = mapped_column(back_populates="generated_paragraphs")
+    search                      :   Mapped['SearchResults'] = relationship(back_populates="generated_paragraphs", lazy="noload")
 
     

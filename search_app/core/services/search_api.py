@@ -2,19 +2,21 @@ from typing import Sequence
 from celery import Celery
 from celery.result import AsyncResult
 
-import config
-from search_app.app.api.models import SearchRequests, TaskResult, SummerizedParagraph
+from search_app import config
+from search_app.app.api.models import SearchRequest, TaskResult, SummerizedParagraph
 
 task_celery = config.CeleryConf
 celery_app = Celery()
 celery_app.config_from_object(task_celery)
+
+print(celery_app.control.ping())
 
 class APISearch():
 
     def __init__(self) -> None:
         pass
 
-    async def make_search(self, search_request : SearchRequests , user_id : int, search_type : str) -> AsyncResult :
+    async def make_search(self, search_request : SearchRequest , user_id : int, search_type : str) -> AsyncResult :
 
         request_kwargs = search_request.model_dump()
         request_kwargs.update({'user_id' : user_id
@@ -25,6 +27,7 @@ class APISearch():
             , kwargs=request_kwargs
             , queue=task_celery.task_search_queue
         )
+        # print('result task print :', result)
 
         return result
     
