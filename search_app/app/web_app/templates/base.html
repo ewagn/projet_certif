@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChatGPT Application</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css')}}">
+</head>
+<body>
+    <div class="header_wrapper">
+        <div class="header">
+            <div class="nav-links">
+                <a href="{{ url_for('index')}}">Get informations</a>
+                <a href="/history">Get history</a>
+                <a href="{{ url_for('search')}}">Make a search</a>
+            </div>
+            <div class="user-account">
+                {% if username is none %}
+                    <a href="{{ url_for('login')}}">login</a>
+                {% else %}
+                    <p>Hello {{ username }}</p>
+                    <a href="{{ url_for('logout')}}">Logout</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% block content %}
+	{% endblock %}
+    <div class="footer">
+        <p>&copy; 2024 ChatGPT Application. All rights reserved.</p>
+    </div>
+</body>
+</html>

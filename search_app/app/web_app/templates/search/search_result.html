@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container">
+    <h1>ChatGPT Application</h1>
+    <p> User prompt : {{ user_input }} </p>
+    <label for="response">Response:</label>
+    <textarea id="response" readonly rows="10"></textarea>
+    <div class="loading" id="loading">Loading...</div>
+</div>
+
+<script>
+    var loadingElement = document.getElementById('loading');
+    var responseElement = document.getElementById("response");
+    function Elem(type, attr, ...children) {
+        let elem = Object.assign(document.createElement(type), attr);
+        for (let child of children) {
+            elem.appendChild(Object(child) === child
+                ? child
+                : document.createTextNode(child));
+        }
+        return elem;
+    }
+    function FormatResult(results) {
+        let resultAnchor = document.getElementById("result_anchor");
+        for (let result of results) {
+            let refCard = [];
+            if (result.refs.length === 0 ){
+                responseElement.value = 'No result found.'
+            } else {
+                for (let ref of result.refs) {
+                    refCard.push(Elem("p", { className: "summ_paragraph_ref" }, ref));
+                };
+                let resultCard = Elem("div", { className: "result_body" },
+                    Elem("h2", { className: "summ_paragraph" }, result.title),
+                    Elem("p", { className: "summ_paragraph" }, result.content),
+                    Elem("div", { className: "summ_paragraph_ref" }, refCard)
+                );
+            }
+        }
+        resultAnchor.append(resultCard)
+    }
+    {% if user_input is defined %}
+    const userInput = "{{ user_input| safe }}";
+    const urlRequest = "{{ url_for('chat') }}"
+    loadingElement.style.display = 'block';
+    responseElement.style.display = 'none'
+    var task_id = ''
+
+    let apiInterval
+
+    function callAPIforTask () {
+        let data = new FormData()
+        data.append('task_id', task_id)
+        fetch(urlRequest, {
+            method: 'POST',
+            body: data
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.response.status == "SUCCESS") {
+                    FormatResult(data);
+                    loadingElement.style.display = 'none';
+                    responseElement.style.display = 'block'
+                    clearInterval(apiInterval);
+                } else if (data.response.status == "ERROR") {
+                    loadingElement.innerText = 'Error';
+                    clearInterval(apiInterval);
+                } else if (data.response === '') {
+                    loadingElement.innerText = '';
+                    clearInterval(apiInterval);
+                };
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                loadingElement.innerText = 'Error';
+            })
+    }
+    function callAPIforTaskIterative (interval) {
+        apiInterval = setInterval(callAPIforTask(), interval)
+    }
+    function callAPIforPrompt() {
+        let data = new FormData()
+        data.append('user_input', userInput)
+        fetch(urlRequest, {
+            method: 'POST',
+            body: data
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.response === "invalid request") {
+                    loadingElement.innerText = 'invalid request'
+                } else if (data.response === "token_invalid") {
+                    let loginURL = '{{ url_for("logout") }}'
+                    loadingElement.innerHTML = `Token expired go to <a href=${loginURL}>login page</a>`
+                } else if (data.response != "error") {
+                    task_id = data.response.task_id;
+                    callAPIforTaskIterative(3000);
+                } else {
+                    console.error('Error:', error);
+                    loadingElement.innerText = 'Error';
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                loadingElement.innerText = 'Error';
+            });
+    }
+
+    if (userInput != null) {
+        callAPIforPrompt()
+    }
+    else if (task_id != '') {
+        callAPIforTaskIterative(3000)
+    }
+    {% elif search_data is defined %}
+        FormatResult({{ search_data['paragraphs']|json }})
+    {% endif %}
+</script>
+{% endblock content %}

@@ -3,22 +3,27 @@ from typing import Iterable, Any
 from selenium.webdriver import Chrome
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
+from selenium.common.exceptions import NoSuchElementException
 from bs4.element import Tag
 import os
+from copy import copy
 
 import logging as lg
 
 from search_app.core.services.webscraping.random_wait import wait_rand
+from search_app.core.services.webscraping.drivers import ScrapingDriver
 
 class DocumentRetriever():
-    def __init__(self, document_extract:Tag, driver:Chrome, temp_folder : Path) -> None:
+
+    _scraping_driver = ScrapingDriver()
+
+    def __init__(self, document_extract:Tag, webdriver_package : dict[str, Chrome | Path]) -> None:
 
         lg.debug("Récupération des données du document.")
 
-        self.temp_folder = temp_folder
-
-        self.driver = driver
+        self._webdriver_package = webdriver_package
         self.document_extract = document_extract
+        self.url = copy(self.driver.current_url)
 
         self.result_id = document_extract.attrs['data-cid']
 
@@ -29,20 +34,61 @@ class DocumentRetriever():
         if self.pdf_file :
             self.ris_file = self.__get_bilio_info()
         
-        if self.ris_file :
-            # return {"pdf_file" : self.pdf_file, "ris_file" : self.ris_file}
-            return self.pdf_file, self.ris_file
+            if self.ris_file :
+                # return {"pdf_file" : self.pdf_file, "ris_file" : self.ris_file}
+                return self.pdf_file, self.ris_file
+            else :
+                return None
         else :
-            return None
+                return None
+        
+    @property
+    def driver(self) -> Chrome:
+        return self._webdriver_package['driver']
+    
+    @driver.setter
+    def driver(self, value):
+        self._webdriver_package.update({
+            'driver' : value
+        })
 
-    def __get_bilio_info(self) -> dict:
+    @property
+    def temp_folder(self) -> Path:
+        return self._webdriver_package['folder']
+    
+    @temp_folder.setter
+    def temp_folder(self, value):
+        self._webdriver_package.update({
+            'folder' : value
+        })
+
+    def rebuild_driver(self):
+        lg.debug('reconstruction du moteur de scraping')
+        self.temp_folder.rmdir()
+        new_driver_package  = self._scraping_driver.get_driver(url = self.url)
+        self.driver         = new_driver_package['driver']
+        self.temp_folder    = new_driver_package['folder']
+
+
+    def __get_bilio_info(self, *args, **kwargs) -> dict:
 
         lg.debug("Récupération des données bibliographiques.")
 
         try :
             self.driver.find_element(by=By.XPATH, value=f"//div[@data-cid='{self.result_id}']//a[@aria-controls='gs_cit']").click()
-            wait_rand(size="small")
+            wait_rand(size="medium")
             WebDriverWait(self.driver, 20.0).until(lambda d: self.driver.find_element(by=By.XPATH, value="//a[@class='gs_citi' and contains(., 'RefMan')]"))
+        except NoSuchElementException as e :
+            retry = kwargs.get('retry', 3)
+            if retry :
+                lg.debug(f"Rééssaie de telechargement des données bibliographiques : tentative restantes {retry}")
+                retry += -1
+                self.rebuild_driver()
+                self.__get_bilio_info(retry = retry)
+            else:
+                e_text = f"Les données bibliogrqphiques n'ont pu être récupérées"
+                lg.error(e_text, exc_info=True)
+                return None
         except Exception as e:
             e_text = f"Les données bibliogrqphiques n'ont pu être récupérées"
             lg.error(e_text, exc_info=True)
@@ -61,10 +107,10 @@ class DocumentRetriever():
         files_in_temp = [f for f in dwl_dir.iterdir() if f.is_file()]
         if files_in_temp :
             ris_file = files_in_temp[0]
-            ris_file_path = dwl_dir.joinpath(ris_file)
-            with open(ris_file_path, mode="r") as risfile:
+            # ris_file_path = dwl_dir.joinpath(ris_file)
+            with open(ris_file.absolute(), mode="r") as risfile:
                 ris_content = risfile.read()
-            os.remove(ris_file_path)
+            os.remove(ris_file.absolute())
 
         else :
             e_text = f"Erreur de récupération des références bibliographiques, le téléchargement n'a pas eu lieu."
@@ -78,14 +124,25 @@ class DocumentRetriever():
         else :
             return None
     
-    def __download_pdf_file(self):
+    def __download_pdf_file(self, *args, **kwargs):
 
         lg.info("Téléchargement du fichier PDF.")
 
         try :
             lg.debug("Suivi du lien de téléchargement.")
             self.driver.find_element(by=By.XPATH, value=f"//a[@data-clk-atid='{self.result_id}']").click()
-            wait_rand()
+            wait_rand(size='medium')
+        except NoSuchElementException as e :
+            retry = kwargs.get('retry', 3)
+            if retry :
+                lg.debug(f"Rééssaie de telechargement du fichier pdf : tentative restantes {retry}")
+                retry += -1
+                self.rebuild_driver()
+                self.__download_pdf_file(retry = retry)
+            else:
+                e_text = "Erreur lors de la récupération du fichier PDF (ouverture du téléchargement)."
+                lg.error(e_text, exc_info=True)
+                return None
         except Exception as e :
             e_text = "Erreur lors de la récupération du fichier PDF (ouverture du téléchargement)."
             lg.error(e_text, exc_info=True)
@@ -97,13 +154,13 @@ class DocumentRetriever():
         if files_in_temp :
             pdf_file = files_in_temp[0]
             if pdf_file :
-                pdf_file = dwl_dir.joinpath(pdf_file)
+                # pdf_file = dwl_dir.joinpath(pdf_file)
                 
                 lg.debug("Lecture du fichier pdf.")
-                with open(pdf_file, mode="rb") as pdf_local_file:
+                with open(pdf_file.absolute(), mode="rb") as pdf_local_file:
                     pdf = pdf_local_file.read()
                 lg.debug("Suppression du fichier pdf du dossier temporaire.")
-                os.remove(pdf_file)
+                os.remove(pdf_file.absolute())
                 if pdf :
                     return pdf
                 else:

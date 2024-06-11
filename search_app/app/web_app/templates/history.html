@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+    <div class="container" id="history">
+        <h1>History</h1>
+        {% if error is defined %}
+        <p>Error occurs, {{ reason }}</p>
+        {% elif searches is defined %}
+            {% if searches != none %}
+            <table>
+                <tbody>
+                    {% for search in searches %}
+                        <a href="{{ url_for('search', search_id=search.id) }}">
+                            <tr>
+                                <td>{{ search.date }}</td>
+                                <td>{{ search.plateform }}</td>
+                                <td>{{ search.type }}</td>
+                            </tr>
+                        </a>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p>No searches found for "{{ username }}" </p>
+            {% endif %}
+        {% else %}
+            <p>Error occurs</p>
+        {% endif %}
+    </div>
+
+{% endblock content %}

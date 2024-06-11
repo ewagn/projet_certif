@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container">
+    <h1>ChatGPT Application</h1>
+    <form id="chat-form", method="post">
+        <label for="user_input">Type your Query:</label>
+        <input type="text" id="user_input" name="user_input" value="{{ request.form['user_input'] }}" required>
+        <div class="centred_button"><button type="submit">Send</button></div>
+    </form>
+</div>
+{% endblock content %}

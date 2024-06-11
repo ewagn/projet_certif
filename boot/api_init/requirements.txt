@@ -1,0 +1,14 @@
+uvicorn[standard]
+celery[redis]
+certifi==2024.2.2
+cryptography==42.0.7
+elasticsearch==8.12.1
+fastapi==0.110.2
+python-jose[cryptography]
+passlib==1.7.4
+prometheus-fastapi-instrumentator
+pydantic==2.6.4
+python-multipart
+SQLAlchemy==2.0.28
+pymysql
+aiomysql

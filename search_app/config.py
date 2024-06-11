@@ -6,7 +6,7 @@ class CeleryConf():
     task_make_search = "search_app.tasks.search"
 
 
-    task_cls='search_app.celery_worker:BaseTask'
+    # task_cls='search_app.celery_worker:BaseTask'
     # broker_url = os.environ.get("CELERY_BROKER_TRANSPORT_URL", None)
     # result_backend = os.environ.get("CELERY_RESULT_TRANSPORT_BACKEND", None)
     broker_url = 'redis://redis:6379/0'

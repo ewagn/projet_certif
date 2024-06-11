@@ -1,6 +1,7 @@
 from typing import Annotated
 from datetime import timedelta
 from contextlib import asynccontextmanager
+from prometheus_fastapi_instrumentator import Instrumentator
 
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -50,6 +51,7 @@ app = FastAPI(
     lifespan=lifespan
     )
 
+Instrumentator().instrument(app).expose(app)
 
 @app.post("/token")
 async def login_for_access_token(
@@ -112,13 +114,13 @@ async def read_users(
 
 @app.get("/users/me/", response_model=User)
 async def read_user_me(
-    current_user : Annotated[User, Depends(sec.get_current_active_user)]
+    current_user : Annotated[User, Security(sec.get_current_active_user, scopes=['me'])]
 ):
     return current_user
 
 @app.delete("/users/me", response_model=UserDeleted, status_code=status.HTTP_200_OK)
 async def delete_user(
-    current_user : Annotated[User, Depends(sec.get_current_active_user)]
+    current_user : Annotated[User, Security(sec.get_current_active_user, scopes=['me'])]
     , db: AsyncSession = Depends(get_db)):
     db_user = await crud.get_user(db=db, user_id=current_user.id)
     if not db_user :
@@ -133,7 +135,7 @@ async def delete_user(
         , response_model=TaskCreated
         , status_code=status.HTTP_202_ACCEPTED)
 async def make_search(
-    current_user : Annotated[User, Depends(sec.get_current_active_user)]
+    current_user : Annotated[User, Security(sec.get_current_active_user, scopes=['me'])]
     , search_params : Annotated[SearchRequest, Body()] 
     , search_type : Annotated[str, Query(
         max_length=3
@@ -158,7 +160,7 @@ async def make_search(
 
 @app.get("/users/me/searches/", response_model=list[Search], status_code=status.HTTP_200_OK)
 async def get_search_for_user(
-    current_user : Annotated[User, Depends(sec.get_current_active_user)]
+    current_user : Annotated[User, Security(sec.get_current_active_user, scopes=['me'])]
     , skip: Annotated[int , Query()] = 0
     , limit: Annotated[int, Query()] = 100
     , db: AsyncSession = Depends(get_db)):
@@ -188,7 +190,7 @@ async def get_search_for_user(
 
 @app.get("/users/me/searches/{search_id}", response_model=list[Search])
 async def get_search_from_user_by_id(
-    current_user : Annotated[User, Depends(sec.get_current_active_user)]
+    current_user : Annotated[User, Security(sec.get_current_active_user, scopes=['me'])]
     , search_id : str
     , db: AsyncSession = Depends(get_db)):
 
@@ -212,7 +214,7 @@ async def get_search_from_user_by_id(
 
 @app.delete("/users/me/searches/{search_id}", response_model=SearchDeleted, status_code=status.HTTP_200_OK)
 async def delete_search_from_user(
-    current_user : Annotated[User, Depends(sec.get_current_active_user)]
+    current_user : Annotated[User, Security(sec.get_current_active_user, scopes=['me'])]
     , search_id : str
     , db: AsyncSession = Depends(get_db)):
     db_user = await crud.get_user(db = db, user_id=current_user.id)
@@ -421,8 +423,7 @@ def delete_search(
 
 @app.get("/tasks/{task_id}", response_model=TaskResult)
 async def get_task(
-    current_user: Annotated[User, Security(sec.get_current_active_user, scopes=['admin'])]
-    , task_id : str
+    task_id : str
     , response : Response
     ):
 

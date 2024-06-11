@@ -193,5 +193,10 @@ LOGGING = {
             "level":    "INFO",
             "propagate": True,
         },
+        "fast_api": {
+            "handlers": ["app"],
+            "level":    "INFO",
+            "propagate": True,
+        },
     },
 }

@@ -2,16 +2,17 @@ from elasticsearch import helpers
 import itertools as it
 from typing import Any
 from datetime import datetime
-from celery import chain, group, chord
+from celery import chain, group, chord, shared_task
 from sqlalchemy.orm import Session
 from celery.utils.log import get_task_logger
 from logging import Logger
+from celery.app import task
 
 
 from search_app.celery_worker import app
-from search_app.tasks.web_scrapping.tasks import get_papers_results_from_google_scholar, get_google_scholar_search_url, get_webdriver_on_page, get_research_pages_on_gs, retrieve_files
-from search_app.tasks.paper_parser.tasks import parse_documents
-from search_app.tasks.summerize.tasks import summerization_step, summerize_paragraph, record_to_es
+from search_app.tasks.web_scrapping.tasks import get_google_scholar_search_url, get_research_pages_on_gs, retrieve_files
+# from search_app.tasks.paper_parser.tasks import parse_documents
+# from search_app.tasks.summerize.tasks import summerization_step, summerize_paragraph, record_to_es
 from search_app.core.databases.sql_models import SearchResults
 from search_app.core.services.parsing.pdf_parsing import Document
 from search_app.core.services.search.engine import QueryNERExtractor
@@ -19,8 +20,8 @@ from search_app.core.services.text_summarize.models import SummerizedParagraph
 
 lg : Logger = get_task_logger(__name__)
 
-@app.task(bind = True)
-def add_pdfs_to_es(self, documents : list[Document]):
+@app.task(name='add_pdfs_to_es', queue="tasks.search", bind = True)
+def add_pdfs_to_es(self : task, documents : list[Document]):
 
     documents_where_pdf_to_record = [doc for doc in documents if doc and not doc.pdf_exists]
 
@@ -38,8 +39,8 @@ def add_pdfs_to_es(self, documents : list[Document]):
     
     return documents
 
-@app.task(bind = True)
-def add_paragraph_to_es(self, documents : list[Document]) -> None :
+@app.task(name='add_paragraph_to_es', queue="tasks.search", bind = True)
+def add_paragraph_to_es(self : task, documents : list[Document]) -> None :
     
     resp = helpers.bulk(self.esh, actions=it.chain.from_iterable([doc() for doc in documents]))
 
@@ -61,13 +62,13 @@ def add_paragraph_to_es(self, documents : list[Document]) -> None :
 #     return search_index
 
 
-@app.task(bind=True)
-def search_in_es_database(self, prompt: str) -> dict[str, Any]:
+@app.task(name='search_in_es_database', queue="tasks.search", bind=True)
+def search_in_es_database(self : task, prompt: str) -> dict[str, Any]:
     result = self.esh.search_from_query(query_promt=prompt)
     return result
 
 
-@app.task
+@app.task(name='get_paragraphs_content_for_answer', queue="tasks.search")
 def get_paragraphs_content_for_answer(search_result : dict[str, Any]) -> list[tuple[str, dict]]:
     buckets_result = search_result['aggregations']['sample']['selected_paragraphs']['buckets']
 
@@ -89,8 +90,8 @@ def get_paragraphs_content_for_answer(search_result : dict[str, Any]) -> list[tu
     
     return paragraphs_by_cathegory
 
-@app.task(bind=True)
-def add_search_to_db(self, generated_paragrpahs : list[SummerizedParagraph], search_index : str, created_on : datetime, research_type : str, search_platform : str, user_id : int | None = None, *args, **kwargs) -> list[dict[str, Any]]:
+@app.task(name='add_search_to_db', queue="tasks.search", bind=True)
+def add_search_to_db(self : task, generated_paragrpahs : list[SummerizedParagraph], search_index : str, created_on : datetime, research_type : str, search_platform : str, user_id : int | None = None, *args, **kwargs) -> list[dict[str, Any]]:
     search = SearchResults(
         search_index            = search_index
         , date_of_search        = created_on
@@ -112,8 +113,8 @@ def add_search_to_db(self, generated_paragrpahs : list[SummerizedParagraph], sea
 
     return generated_paragrpahs
 
-@app.task
-def retrieve_bibliographical_info(self, summerized_paragraph : SummerizedParagraph) -> SummerizedParagraph:
+@app.task(name='retrieve_bibliographical_info', queue="tasks.search", bind=True)
+def retrieve_bibliographical_info(self : task, summerized_paragraph : SummerizedParagraph) -> SummerizedParagraph:
     
     lg.info("Récupération des données bibliographiques du paragraphe généré.")
     summerized_paragraph.retrieve_bibliographical_info(es_handler=self.esh)
@@ -194,7 +195,8 @@ def retrieve_bibliographical_info(self, summerized_paragraph : SummerizedParagra
 
 #     return result
 
-@app.task(name='search_app.tasks.search')
+# @app.task(name='search_app.tasks.search')
+@app.task(name='search_app.tasks.search', queue="tasks.search")
 def get_search_results(prompt : str, search_type : str, search_platform : str,  search_params : dict| None = None, user_id : int | None = None) -> dict[str, Any]:
     
     created_on = datetime.now()
@@ -212,17 +214,13 @@ def get_search_results(prompt : str, search_type : str, search_platform : str,  
 
     # url = get_google_scholar_search_url()
     # first_webdriver, _ = get_webdriver_on_page(url=url)
-    # search_pages = get_research_pages_on_gs(first_webdriver, nb_pages=nb_pages)
-
-
-    
+    # search_pages = get_research_pages_on_gs(first_webdriver, nb_pages=nb_pages)    
     
     result = chain(
         # get_papers_results_from_google_scholar.s(query_terms = query_terms.list_of_keywords(), nb_pages = nb_pages, query_params = search_params)
-        get_google_scholar_search_url.s(query_terms=query_terms.list_of_keywords(), query_params=search_params)
-        | get_webdriver_on_page.s()
-        | get_research_pages_on_gs.s(nb_pages=nb_pages)
-        # , retrieve_files.s()
+        get_google_scholar_search_url.s()
+        , get_research_pages_on_gs.s(nb_pages=nb_pages)
+        , retrieve_files.s()
         # , parse_documents.s(user_query = prompt, search_index = search_index, created_on = created_on) 
         # , add_pdfs_to_es.s()
         # , add_paragraph_to_es.s()
@@ -230,7 +228,7 @@ def get_search_results(prompt : str, search_type : str, search_platform : str,  
         # , get_paragraphs_content_for_answer.s()
         # , summerization_step.s(search_index = search_index, created_on = created_on)
         # , add_search_to_db.s(search_index=search_index, created_on=created_on, research_type=search_type, search_platform=search_platform, user_id=user_id)
-    )()
+    )(query_terms=query_terms.list_of_keywords(), query_params=search_params)
 
 
     #### BACK

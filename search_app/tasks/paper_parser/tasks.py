@@ -8,7 +8,7 @@ from search_app.core.services.parsing.pdf_parsing import Document
 
 lg = get_task_logger(__name__)
 
-@app.task(bind=True)
+@app.task(name='create_documents_from_google_scholar', queue="tasks.search",  bind=True)
 def create_documents_from_google_scholar(self, pdf_file:bytes, ris_file:str, created_on:datetime, user_query:str, search_index:str) -> Document | None :
     lg.info("Scrapping de la page google scholar.")
     database = "google_scholar"
@@ -16,7 +16,7 @@ def create_documents_from_google_scholar(self, pdf_file:bytes, ris_file:str, cre
 
     return doc
 
-@app.task
+@app.task(name='get_documents_paragraphs_for_put_on_db', queue="tasks.search")
 def get_documents_paragraphs_for_put_on_db(documents = list[Document | None]) -> list[dict[str, str]]:
 
     documents_elements_to_put_on_db = list()
@@ -26,7 +26,7 @@ def get_documents_paragraphs_for_put_on_db(documents = list[Document | None]) ->
     
     return documents_elements_to_put_on_db
 
-@app.task(name='parse_documents')
+@app.task(name='parse_documents', queue="tasks.search")
 def parse_documents (papers : list[list[tuple[bytes, str]]], user_query:str, search_index:str, created_on : datetime, *args, **kwargs) -> list[Document | None] | None :
     
     parsing_documents_list = list()

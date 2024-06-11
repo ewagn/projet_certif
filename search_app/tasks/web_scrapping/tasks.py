@@ -9,13 +9,17 @@ from typing import Any
 import uuid
 from celery.utils.log import get_task_logger
 from logging import Logger
+import random
 
 from search_app.celery_worker import app
+from celery.app import task
 from search_app.core.services.webscraping.google_scholar_scraping import DocumentRetriever
 
 lg : Logger = get_task_logger(__name__)
 
-@app.task
+
+
+@app.task(name='get_google_scholar_search_url', queue="tasks.search")
 def get_google_scholar_search_url(query_terms : list[str], query_params : dict | None = None):
 
     lg.info("Création de l'adresse de recherche à partir des termes de la recherche.")
@@ -25,39 +29,59 @@ def get_google_scholar_search_url(query_terms : list[str], query_params : dict |
 
     return search_url
 
-@app.task
-def get_webdriver_on_page(url : str):
+# @app.task(name="get_webdriver_on_page", queue="tasks.search")
+# def get_webdriver_on_page(url : str):
 
-    lg.info("Creation d'un moteur de scraping.")
-    service = Service(executable_path='/usr/bin/chromedriver')
-    chrome_options = ChromeOptions()
+#     AGENT_LIST = [
+#     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/44.0.2403.157 Safari/537.36",
+#     "Mozilla/5.0 (X11; Ubuntu; Linux i686; rv:24.0) Gecko/20100101 Firefox/24.0",
+#     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/91.0.4472.114 Safari/537.36",
+#     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.1.1 Safari/605.1.15",
+#     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:77.0) Gecko/20100101 Firefox/77.0"
+#     ]
 
-    # temp_folder = Path(os.getenv("TEMP_EMPL"))
-    # temp_folder.mkdir(parents=True, exist_ok=True)
-    temp_folder = Path('./temp_' + uuid.uuid4())
-    temp_folder.mkdir(parents=True, exist_ok=True)
+#     lg.info("Creation d'un moteur de scraping.")
+#     service = Service(executable_path='/usr/bin/chromedriver')
+#     chrome_options = ChromeOptions()
 
-    prefs = {
-        "download.default_directory" : str(temp_folder),
-        'download.prompt_for_download': False,
-        'plugins.always_open_pdf_externally': True,
-    }
+#     # temp_folder = Path(os.getenv("TEMP_EMPL"))
+#     # temp_folder.mkdir(parents=True, exist_ok=True)
+#     temp_folder = Path('./temp_' + str(uuid.uuid4()))
+#     temp_folder.mkdir(parents=True, exist_ok=True)
 
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_experimental_option('prefs', prefs)
+#     prefs = {
+#         "download.default_directory" : str(temp_folder.absolute()),
+#         'download.prompt_for_download': False,
+#         'plugins.always_open_pdf_externally': True,
+#     }
 
-    driver = Chrome(
-        options=chrome_options,
-        service=service
-        )
-    driver.get(url=url)
-    return driver, temp_folder
+#     chrome_options.add_argument("--headless=new")
+#     # chrome_options.add_argument('--disable-blink-features')
+#     chrome_options.add_argument("--incognito")
+#     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+#     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+#     chrome_options.add_experimental_option('useAutomationExtension', False)
 
-@app.task()
-def get_research_pages_on_gs(driver : Chrome, temp_folder : Path, nb_pages:int,) -> list[str]:
+#     chrome_options.add_experimental_option('prefs', prefs)
+
+    
+
+#     driver = Chrome(
+#         options=chrome_options,
+#         service=service
+#         )
+#     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+#     driver.execute_cdp_cmd('Network.setUserAgentOverride', {"userAgent": random.choice(AGENT_LIST)})
+#     driver.get(url=url)
+#     return driver, temp_folder
+
+@app.task(name='get_research_pages_on_gs', queue="tasks.search", bind=True)
+def get_research_pages_on_gs(self : task, url : str, nb_pages:int) -> list[str]:
+
+    webdriver_package = self.get_webdriver(url=url)
 
     lg.info("Récupération des résultats de la recherche sur la page web google scholar.")
-    results_page = BeautifulSoup(driver.execute_script("return document.documentElement.outerHTML;"), 'html.parser')
+    results_page = BeautifulSoup(webdriver_package["driver"].execute_script("return document.documentElement.outerHTML;"), 'html.parser')
 
     navigator = results_page.find("div", attrs={'id' : "gs_n", 'role' : "navigation"})
     pages = navigator.find_all("a", limit=nb_pages)
@@ -65,64 +89,79 @@ def get_research_pages_on_gs(driver : Chrome, temp_folder : Path, nb_pages:int,)
 
     pages_urls = [base_url + page.get("href") for page in pages]
 
-    pages_urls[:0] = driver.current_url
+    pages_urls[:0] = [webdriver_package["driver"].current_url]
+
+    webdriver_package["folder"].rmdir()
+    webdriver_package["driver"].delete_all_cookies()
+    webdriver_package["driver"].quit()
 
     return pages_urls
 
 
-@app.task
-def parse_page_for_gs(driver : Chrome, temp_folder : Path) -> list[tuple[bytes, str]]:
+@app.task(name='parse_page_for_gs', queue="tasks.search", bind=True)
+def parse_page_for_gs(self : task, url: str) -> list[tuple[bytes, str]]:
+    webdriver_package = self.get_webdriver(url=url)
 
     lg.info("Traitement des fichiers récupérés sur la page web google scholar.")
-    results_page = BeautifulSoup(driver.execute_script("return document.documentElement.outerHTML;"), 'html.parser')
+    results_page = BeautifulSoup(webdriver_package["driver"].execute_script("return document.documentElement.outerHTML;"), 'html.parser')
     results = results_page.find_all('div', attrs={'class' : "gs_r gs_or gs_scl"})
     
     files = list()
     for result in results :
-            extractor = DocumentRetriever(document_extract=result, driver=driver, temp_folder=temp_folder)
+            extractor = DocumentRetriever(document_extract=result, webdriver_package=webdriver_package)
             file = extractor.get_files()
             if file :
-                 files.append(file)
-    
-    driver.quit()
-    os.remove(temp_folder)
+                lg.debug('Ajout des fichiers à la liste des fichiers à traiter.') 
+                files.append(file)
+
+    webdriver_package["driver"].delete_all_cookies()
+    webdriver_package["driver"].quit()
+    webdriver_package["folder"].rmdir()
     
     return files
 
 
-@app.task(name='retrieve_pages')
-def retrieve_pages(query_terms : list[str], nb_pages : int, query_params : dict | None = None):
-    result = (
-        chain(get_google_scholar_search_url.s(query_terms=query_terms, query_params=query_params) 
-                        , get_webdriver_on_page.s() 
-                        , get_research_pages_on_gs.s(nb_pages=nb_pages))
-    )
-    return result
+# @app.task(name='retrieve_pages', queue="tasks.search")
+# def retrieve_pages(query_terms : list[str], nb_pages : int, query_params : dict | None = None):
+#     result = (
+#         chain(get_google_scholar_search_url.s(query_terms=query_terms, query_params=query_params) 
+#                         , get_webdriver_on_page.s() 
+#                         , get_research_pages_on_gs.s(nb_pages=nb_pages))
+#     )()
+#     return result
+
+@app.task(name='get_result_files', queue="tasks.search")
+def get_result_files(results_list = list[list[tuple[bytes, str]]]):
+    results_out = list()
+    for results in results_list :
+        results_out.extend(results)
+
+    return results_out
 
 
-@app.task(name='retrieve_files')
-def retrieve_files(pages : list[str]) -> list[list[tuple[bytes, str]]]:
+@app.task(name='retrieve_files', queue="tasks.search")
+def retrieve_files(pages : list[str]) -> list[tuple[bytes, str]]:
 
     pages_scraping_list = list()
 
     for page in pages :
-         pages_scraping_list.append(chain(get_webdriver_on_page.s(page), parse_page_for_gs.s())())
+        pages_scraping_list.append(parse_page_for_gs.s(page))
      
-    result = group(pages_scraping_list)().get()
+    result = chord(pages_scraping_list)(get_result_files.s())
     
     return result
 
-@app.task(name='get_papers_results_from_google_scholar')
-def get_papers_results_from_google_scholar(query_terms : list[str], nb_pages : int, query_params : dict | None = None) -> list[list[tuple[bytes, str]]] :
+# @app.task(name='get_papers_results_from_google_scholar', queue="tasks.search")
+# def get_papers_results_from_google_scholar(query_terms : list[str], nb_pages : int, query_params : dict | None = None) -> list[list[tuple[bytes, str]]] :
      
-    result = (
-        get_google_scholar_search_url.s(query_terms=query_terms, query_params=query_params) 
-        | get_webdriver_on_page.s() 
-        | get_research_pages_on_gs.s(nb_pages=nb_pages)
-        | retrieve_files.s()
-    )
+#     result = (
+#         get_google_scholar_search_url.s(query_terms=query_terms, query_params=query_params) 
+#         | get_webdriver_on_page.s() 
+#         | get_research_pages_on_gs.s(nb_pages=nb_pages)
+#         | retrieve_files.s()
+#     )
     
-    return result
+#     return result
 
 # @app.task
 # def get_papers_results_from_google_scholar(query_terms : list[str], query_params : dict | None = None) -> list[tuple[bytes, str]] :
