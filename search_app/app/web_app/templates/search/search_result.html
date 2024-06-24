@@ -89,12 +89,10 @@
             .then(data => {
                 if (data.response === "invalid request") {
                     loadingElement.innerText = 'invalid request'
-                } else if (data.response === "token_invalid") {
-                    let loginURL = '{{ url_for("logout") }}'
-                    loadingElement.innerHTML = `Token expired go to <a href=${loginURL}>login page</a>`
                 } else if (data.response != "error") {
                     task_id = data.response.task_id;
-                    callAPIforTaskIterative(3000);
+                    //callAPIforTaskIterative(3000);
+                    callAPIforTask();
                 } else {
                     console.error('Error:', error);
                     loadingElement.innerText = 'Error';
