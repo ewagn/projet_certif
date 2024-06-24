@@ -18,7 +18,7 @@ from search_app.core.databases.elasticsearch_backend import ESHandler
 
 class Document():
 
-    def __init__(self, pdf_file:bytes, ris_file:str, database:str, created_on:datetime, user_query:str, search_index:str, es_handler = ESHandler, *args, **kwargs) -> None:
+    def __init__(self, pdf_file : bytes, ris_file : str, database : str, created_on : datetime, user_query : str, search_index : str, es_handler : ESHandler, *args, **kwargs) -> None:
         self.doc_type = "pdf"
         self._pdf_exists = None
         self.paragraphs = None
@@ -35,15 +35,19 @@ class Document():
 
 
     @classmethod
-    def create_document(cls, pdf_file, ris_file, database:str, created_on:datetime, user_query:str, search_index:str, es_handler = ESHandler, *args, **kwargs):
+    def create_document(cls, pdf_file, ris_file, database : str, created_on : datetime, user_query : str, search_index : str, es_handler : ESHandler, *args, **kwargs):
 
         lg.debug("Construction d'un nouveau document")
 
-        instance = cls(pdf_file, ris_file, database, created_on, user_query, search_index, *args, **kwargs)
+        instance = cls(pdf_file, ris_file, database, created_on, user_query, search_index, es_handler=es_handler, *args, **kwargs)
 
         lg.debug(f"Le docuement est crée.")
 
         ref_parsing = instance.__parse_bibref()
+        if not ref_parsing :
+            lg.info("La creation du document à échoué (erreur de récupération des références bibliographiques).")
+            return None
+        
         pdf_parsing = instance.__parse_pdf_file()
 
 
@@ -78,7 +82,7 @@ class Document():
 
         lg.debug("Enrichissement du document selon les données bilbiographiques")
 
-        biblio = rispy.load(self.ris_file)
+        biblio = rispy.loads(self.ris_file)
         if biblio :
             if isinstance(biblio, list) :
                 biblio = biblio[0]
@@ -99,23 +103,26 @@ class Document():
 
         else :
             lg.debug("Les données bibliographiques n'ont pu être parsées")
+            lg.debug(f"Les données en entrée sont = {str(self.ris_file)} et les données en sortie sont {str(biblio)}")
+            raise ValueError("les données n'ont pu être traitées")
             return False
 
     def __save_pdf_to_fs(self):
 
         self.file_name = str(uuid.uuid1()) + ".pdf"
+        pdf_folder = Path(os.getenv("PDF_FILES_PATH"))
+        pdf_folder.mkdir(parents=True, exist_ok=True)
         self.pdf_file_path = Path(os.getenv("PDF_FILES_PATH")).joinpath(self.file_name)
-        self.pdf_file_path.mkdir()
         # self.pdf_file_path.mkdir(parents=True, exist_ok=True)
 
-        with open(self.pdf_file_path, mode="wb+") as file:
-            file.write(self.pdf)
+        # with open(self.pdf_file_path, mode="wb+") as file:
+        #     file.write(self.pdf)
 
         lg.debug("Le fichier PDF est enregistré dans le FS.")
 
-    def __parse_pdf_file(self):
+    def __parse_pdf_file(self) -> bool:
 
-        parsed_pdf = PDFParser().parse(pdf_file=self.pdf_file)
+        parsed_pdf = PDFParser.parse(pdf_file=self.pdf)
 
         if parsed_pdf :
             self.paragraphs = parsed_pdf.paragraphs
@@ -125,6 +132,7 @@ class Document():
                 
             
             lg.debug("les données du PDF ont été récupérées.")
+            return True
         else :
             lg.info("Le PDF n'a pu être parsé.")
             return False
@@ -186,7 +194,7 @@ class Document():
                 'issn'              :   self.issn,
                 "publication_year"  :   self.pub_year,
                 "publisher"         :   self.publisher,
-                'pdf_file_path'     :   self.pdf_file_path,
+                'pdf_file_path'     :   str(self.pdf_file_path.absolute()),
                 "created_on"        :   self.created_on.isoformat(),
             }
             document = dict()
@@ -224,8 +232,8 @@ class PDFParser():
     def __init__(self, pdf_file) -> None:
         self.__file = pdf_file
 
-        self.__toc_titles = None
-        self.__toc_titles_hierarchy = None
+        self.toc_titles = None
+        self.toc_titles_hierarchy = None
     
     @classmethod
     def parse(cls, pdf_file):
@@ -234,7 +242,7 @@ class PDFParser():
         self = cls(pdf_file)
 
         try :
-            self.__parsed_pdf = fitz.Document(stream=self.__file)
+            self.parsed_pdf = fitz.Document(stream=self.__file)
         except Exception as e :
             error = e
             breakpoint()
@@ -254,17 +262,17 @@ class PDFParser():
         lg.info("Récupération de la table des matières du PDF")
 
         lg.debug("Vérification de l'existance de la table des matières.")
-        toc = self.__parsed_pdf.get_toc()
+        toc = self.parsed_pdf.get_toc()
         
         if toc :
             lg.debug("La table des matières existe.")
-            self.__toc_titles = set()
-            self.__toc_titles_hierarchy = dict()
+            self.toc_titles = set()
+            self.toc_titles_hierarchy = dict()
 
             lg.debug("Récupération des titres dans la tables de matières.")
             for title in toc:
-                self.__toc_titles.add(title[1].strip().lower())
-                self.__toc_titles_hierarchy.update({
+                self.toc_titles.add(title[1].strip().lower())
+                self.toc_titles_hierarchy.update({
                         tuple(self.__preprocessing_text(title[1])):   {
                         'title'     :  title[1].strip().lower(),
                         'hierarchy' :   title[0]}
@@ -293,15 +301,15 @@ class PDFParser():
 
         lg.debug("Compraisons sérielle des titres avec la méthode tversky.")
         comparison = dict()
-        for title in self.__toc_titles:
+        for title in self.toc_titles_hierarchy:
             score = self.__tversky(title, string_to_compare)
-            if score > 0.8 :
+            if score > 0.85 :
                 comparison.update({score :   title})
         
         lg.debug("Sélection du titre le plus probalble selon le score de proximité.")
         if comparison :
             max_score = max(comparison)
-            return (self.__toc_titles_hierarchy[comparison[max_score]]['hierarchy'], self.__toc_titles_hierarchy[comparison[max_score]]['title'])
+            return (self.toc_titles_hierarchy[comparison[max_score]]['hierarchy'], self.toc_titles_hierarchy[comparison[max_score]]['title'])
         else:
             return None
 
@@ -314,21 +322,23 @@ class PDFParser():
         sub_title = ""
 
         lg.debug("Itération sur les pages et paragraphes du PDF.")
-        for p_nb, page in enumerate(self.__parsed_pdf, start=1):
+        for p_nb, page in enumerate(self.parsed_pdf, start=1):
             for p in page.get_text('blocks'):
 
                 title = True
 
                 lg.debug("Segmentation du texte en paragraphes.")
-                p_text : list = p[4].split('\n')
+                p_text : list = p[4].replace('.\n', ".///")
+                p_text : list = p[4].split('///')
+                p_text = [prg.replace('\n', " ") for prg in p_text]
 
                 lg.debug("Tentative d'indentificiation des titres.")
                 text :list = p_text.copy()
 
                 text_out = list()
 
-                while self.__toc_titles and title and text :
-                    title = self.__compare_to_titles(text[0])
+                while self.toc_titles and title and text :
+                    title = self.__compare_to_titles(text[0].split('\n')[0])
                     if title :
                         hierarchy, title_string = title
 
@@ -337,17 +347,21 @@ class PDFParser():
                         else :
                             sub_title = title_string
                         
-                        text.pop(0)
+                        inital_text = text[0].split("\n")
+                        text[0] = ' '.join(inital_text[1:])
+
+                        
+                        text_out.append(text.pop(0))
 
                     else :
-                        text_out.append(text.pop(0))
+                        text_out.append(text.pop(0).replace('\n', " "))
 
 
                 lg.debug("Création des paragraphs ")
                 if text_out :
                     
                     lg.debug("Fusion du texte.")
-                    text_out = " ".join(text_out)
+                    text_out = " ".join([t for t in text_out if t])
 
                     lg.debug("Calcul de la longueur de la protion de texte traitée.")
                     paragraph_length = re.subn(pattern=r"[^\w\s]|[\d]", repl='', string=text_out)[0]
@@ -355,14 +369,14 @@ class PDFParser():
 
                     lg.debug("Ajout du paragraphe aux paragraphes")
                     if len(paragraph_length) >= 5 :
-                        if paragraphs and paragraphs[-1][-1][-1] != "." :
+                        if paragraphs and paragraphs[-1][-1].strip()[-1] != "." :
                             paragraphs[-1][-1] = paragraphs[-1][-1] + " " + text_out.strip()
                         else :
                             paragraphs.append([p_nb, part_tite, sub_title, text_out.strip()])
         
         lg.debug("Formatage des paragraphes récupérés.")
+        paragraphs_out = list()
         if paragraphs :
-            paragraphs_out = list()
             for paragraph in paragraphs :
                 paragraph_out = dict()
                 page_nb, part_tite, sub_title, p_text = paragraph
@@ -380,5 +394,4 @@ class PDFParser():
                     'sub_title'   :   sub_title,
                 })
                 paragraphs_out.append(paragraph_out)
-
         self.paragraphs = paragraphs_out

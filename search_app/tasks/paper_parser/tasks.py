@@ -12,7 +12,7 @@ lg = get_task_logger(__name__)
 def create_documents_from_google_scholar(self, pdf_file:bytes, ris_file:str, created_on:datetime, user_query:str, search_index:str) -> Document | None :
     lg.info("Scrapping de la page google scholar.")
     database = "google_scholar"
-    doc = Document().create_document(pdf_file=pdf_file, ris_file=ris_file, database=database, created_on=created_on, user_query=user_query, search_index=search_index, es_handler=self.esh)
+    doc = Document.create_document(pdf_file=pdf_file, ris_file=ris_file, database=database, created_on=created_on, user_query=user_query, search_index=search_index, es_handler=self.esh)
 
     return doc
 
@@ -27,20 +27,33 @@ def get_documents_paragraphs_for_put_on_db(documents = list[Document | None]) ->
     return documents_elements_to_put_on_db
 
 @app.task(name='parse_documents', queue="tasks.search")
-def parse_documents (papers : list[list[tuple[bytes, str]]], user_query:str, search_index:str, created_on : datetime, *args, **kwargs) -> list[Document | None] | None :
+def parse_documents (papers : list[tuple[bytes, str]], user_query:str, search_index:str, created_on : datetime, *args, **kwargs) -> list[Document | None] | None :
     
     parsing_documents_list = list()
 
-    for papers_list in papers:
-        for pdf_file, ris_file in papers_list :
-            parsing_documents_list.append(
-                create_documents_from_google_scholar.s(pdf_file = pdf_file, ris_file = ris_file, created_on = created_on, user_query = user_query, search_index=search_index)()
-            )
+    # for papers_list in papers:
+    for pdf_file, ris_file in papers :
+        parsing_documents_list.append(
+            create_documents_from_google_scholar.s(pdf_file = pdf_file, ris_file = ris_file, created_on = created_on, user_query = user_query, search_index=search_index)
+        )
 
 
     result = group(parsing_documents_list)()
 
     return result
+
+@app.task(name='parse_documents_seq', queue="tasks.search")
+def parse_documents_seq (papers : list[tuple[bytes, str]], user_query:str, search_index:str, created_on : datetime, *args, **kwargs) -> list[Document | None] | None :
+    
+    parsing_documents_list = list()
+
+    # for papers_list in papers:
+    for pdf_file, ris_file in papers :
+        parsing_documents_list.append(
+            create_documents_from_google_scholar(pdf_file = pdf_file, ris_file = ris_file, created_on = created_on, user_query = user_query, search_index=search_index)
+        )
+
+    return parsing_documents_list
 
 
 # @app.task

@@ -42,7 +42,7 @@ RUN adduser --disabled-password --gecos '' $VM_USER \
 
 # RUN python -m nltk.downloader stopwords
 
-RUN python -m nltk.downloader -d '/usr/local/nltk_data' 'stopwords' 'words'
+RUN python -m nltk.downloader -d '/usr/local/nltk_data' 'stopwords' 'words' 'punkt'
 
 # RUN python3 -c <<HEREDOC\
 # import nltk\

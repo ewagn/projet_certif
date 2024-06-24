@@ -126,9 +126,11 @@ async def delete_user(
     if not db_user :
         raise HTTPException(status_code=404, detail='User not found')
     
+    ret_db_user = UserDeleted.model_validate(db_user)
+    
     await crud.delete_user(db=db, user=db_user)
 
-    return db_user
+    return ret_db_user
 
 @app.post(
         "/users/me/search"
@@ -224,10 +226,12 @@ async def delete_search_from_user(
     if not search :
         raise HTTPException(status_code=status.HTTP_204_NO_CONTENT, detail='Search not found')
     
+    deleted_search = SearchDeleted.model_validate(search)
+    
     deleted = await crud.delete_search_from_user(db =db, user=db_user, search=search)
 
     if deleted :
-        return search
+        return deleted_search
     else :
         raise HTTPException(status_code=status.HTTP_304_NOT_MODIFIED, detail='No modification made on database.')
 
@@ -262,7 +266,10 @@ async def delete_user(
     
     deleted = await crud.delete_user(db=db, user=db_user)
     
-    return user
+    if deleted :
+        return user
+    else:
+        raise HTTPException(status_code=500, detail='User not deleted')
 
 
 @app.get("/users/{user_id}/searches/", response_model=list[Search], status_code=status.HTTP_200_OK)
@@ -343,10 +350,12 @@ async def delete_search_from_user(
     if not search :
         raise HTTPException(status_code=status.HTTP_204_NO_CONTENT, detail='Search not found')
     
+    deleted_search = SearchDeleted.model_validate(search)
+    
     deleted = await crud.delete_search_from_user(db =db, user=db_user, search=search)
 
     if deleted :
-        return search
+        return deleted_search
     else :
         raise HTTPException(status_code=status.HTTP_304_NOT_MODIFIED, detail='No modification made on database.')
 
@@ -404,7 +413,7 @@ async def get_search_by_id(
 
     
 @app.delete("/searches/{search_id}", response_model=SearchDeleted, status_code=status.HTTP_200_OK)
-def delete_search(
+async def delete_search(
     current_user: Annotated[User, Security(sec.get_current_active_user, scopes=['admin'])]
     , search_id : str
     , db: AsyncSession = Depends(get_db)
@@ -413,13 +422,15 @@ def delete_search(
     search = crud.get_search_by_id(db=db, search_id=search_id)
 
     if search :
+        deleted_search = SearchDeleted.model_validate(search)
 
-        crud.delete_search(db=db, search=search)
+        is_deleted = await crud.delete_search(db=db, search=search)
 
     else :
         raise HTTPException(status_code=404, detail='Search not found')
     
-    return search
+    if is_deleted :
+        return deleted_search
 
 @app.get("/tasks/{task_id}", response_model=TaskResult)
 async def get_task(

@@ -1,7 +1,7 @@
 import os
 
 class CeleryConf():
-    task_search_queue = "search_app.tasks.search"
+    task_search_queue = "tasks.search"
     task_search_prefix = "search_app.tasks.search.tasks"
     task_make_search = "search_app.tasks.search"
 

@@ -23,24 +23,45 @@ class ESHandler():
         self.instances += 1
         self.es
 
-    @property
-    def es(self) -> Elasticsearch:
-        """Instance de l'API ElasticSaerch."""
-        if self._es == None :
-        
-            self._es = Elasticsearch(
-                hosts=[{'host': 'localhost', 'port': 9200, 'scheme': 'https'}],
+    def create_es_engine(self):
+        return Elasticsearch(
+                hosts=[{'host': 'es01', 'port': 9200, 'scheme': 'https'}],
                 ssl_assert_hostname='es01',
                 basic_auth=('elastic', os.getenv('ELASTIC_PASSWORD')),
             # cert_reqs="CERT_REQUIRED",
                 ca_certs=os.getenv("ES_VM_CERTIF_PATH") + "ca/ca.crt")
-            
+    
+    def put_licence(self):
+        licence_info = self._es.license.get().raw
+        is_licence = False
+        if licence_info :
+            licence_elements = licence_info.get('license', None)
+            if licence_elements :
+                licence_status = licence_elements.get('status', None)
+                if licence_status and licence_status == 'active':
+                    if licence_elements['type'] == 'trial':
+                        is_licence = True
+        
+        if not is_licence :
+            self._es.license.post_start_trial(acknowledge = True)
+    
+    @property
+    def es(self) -> Elasticsearch:
+        """Instance de l'API ElasticSearch."""
+        if self._es == None :
+        
+            self._es = self.create_es_engine()
+
+            self.put_licence()
+
             if not self.__check_if_elser_model_install():
                 self.__setup_elser_model()
                 self.__create_elser_pipeline()
 
             self._es.info()
             lg.info("La connexion à la base de données ElasticSearch est établie.")
+        if not self._es.ping():
+            self._es = self.create_es_engine()
         
         return self._es
 
@@ -56,13 +77,12 @@ class ESHandler():
             self.__text_embedding = text_embedding
 
     def __check_if_elser_model_install(self):
-        is_install = self.es.ml.get_trained_models(
-            model_id=".elser_model_2"
-        )
-        if not is_install["trained_model_configs"]:
-            return False
-        else:
-            return True
+        is_install = False
+        models_installed = self.es.ml.get_trained_models()
+        for model in models_installed['trained_model_configs']:
+            if '.elser_model_2' in model['model_id']:
+                is_install = True
+        return is_install
     
     def __create_elser_pipeline(self):
         self.es.ingest.put_pipeline(
@@ -84,7 +104,7 @@ class ESHandler():
     def __setup_elser_model(self):
         self.es.ml.put_trained_model(
             model_id=".elser_model_2"
-            , input={"fields_names" : ["text_field"]}
+            , input={"field_names" : ["text_field"]}
         )
 
         while True :
@@ -247,7 +267,7 @@ class ESHandler():
             return None
 
         sort_order = ["_score"]
-        result = self.es.search(index='pdf_files', query=query_params, sort=sort_order)
+        result = self.es.search(index=self.pdfs_index, query=query_params, sort=sort_order)
         results = result['hits']['hits']
         if results :
             document.es_pdf_id = results[0]["_id"]

@@ -52,6 +52,8 @@ class Role(Base):
     scope           : Mapped[str] = mapped_column(String(30))
     description     : Mapped[str] = mapped_column(String(264))
 
+    __table_args__ = (UniqueConstraint("scope"), )
+
 # class Address(Base):
 #     __tablename__ = "address"
 #     id              :   Mapped[int] = mapped_column(primary_key=True)

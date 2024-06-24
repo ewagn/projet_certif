@@ -214,6 +214,7 @@ services:
         VM_HOST_PIP: "${API_HOST_PIP}"
         PROJ_INIT_FOLD: "${API_PROJ_BASE}"
     # command: /bin/sh ./entrypoint.sh
+    container_name: api
     secrets:
       - secret_api
       - mariadb_mysql_pwd
@@ -263,6 +264,7 @@ services:
       - worker-network
       - es-network
       - sql-network
+      - monitoring-network
     ports:
       - 8000:8000
 
@@ -307,6 +309,8 @@ services:
       - CELERY_BROKER_TRANSPORT_URL="${CELERY_BROKER_URL}"
       - CELERY_RESULT_TRANSPORT_BACKEND="${CELERY_RESULT_BACKEND}"
       - ES_VM_CERTIF_PATH=${ES_VM_CERTIF_PATH}
+      - HEADER_API_KEY=${HEADER_API_KEY}
+      - SCRAPPED_PDF_FOLDER=${SCRAPPED_PDF_FOLDER}
     networks:
       - worker-network
       - es-network
@@ -333,7 +337,45 @@ services:
   # worker_1:
   #   extends:
   #     service: worker
-      
+
+  flower:
+    image: "${FLOW_VM_IMG_NAME}"
+    command: ['celery', '--broker=redis://redis:6379/0', 'flower', '--port=5555']
+    container_name: flower
+    volumes:
+      - flower_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - worker-network
+      - monitoring-network
+    ports: 
+      - 5555:5555
+  
+  prometheus:
+    build:
+      dockerfile: "${PROM_DOCKERFILE}"
+      args:
+        VM_IMG_NAME: "${PROM_VM_IMG_NAME}"
+        HOST_YML_PATH: "${PROM_HOST_YML_PATH}"
+    container_name: prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    # expose: 9090
+    networks:
+      - monitoring-network
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - 3000:3000
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - monitoring-network
+
 
 
   # mongodb:
@@ -416,6 +458,18 @@ volumes:
       type: local
   esdata01:
     driver: local
+  grafana_data:
+    driver: local
+    driver_opts:
+      o: bind
+      type: local
+      device: ./grafana_data
+  flower_data:
+    driver: local
+    driver_opts:
+      o: bind
+      type: local
+      device: ./flower_data
 
 
 
@@ -466,6 +520,12 @@ networks:
       config:
         - subnet: 10.2.0.0/16
           gateway: 10.2.0.1
+  monitoring-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.5.0.0/16
+          gateway: 10.5.0.1
   # nosql-network:
   #   driver: bridge
   #   ipam:

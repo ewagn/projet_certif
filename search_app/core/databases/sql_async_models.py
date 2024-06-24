@@ -58,6 +58,8 @@ class Role(Base):
     id              : Mapped[int] = mapped_column(primary_key=True)
     scope           : Mapped[str] = mapped_column(String(30))
     description     : Mapped[str] = mapped_column(String(264))
+    
+    __table_args__ = (UniqueConstraint("scope"), )
 
 class SearchResults(Base):
     __tablename__ = "search"

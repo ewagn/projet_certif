@@ -163,3 +163,4 @@ cython_debug/
 *_pwd.txt
 celery_exemple/
 text_sumary/models_llm
+*_exemple/

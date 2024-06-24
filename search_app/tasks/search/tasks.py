@@ -11,8 +11,8 @@ from celery.app import task
 
 from search_app.celery_worker import app
 from search_app.tasks.web_scrapping.tasks import get_google_scholar_search_url, get_research_pages_on_gs, retrieve_files
-# from search_app.tasks.paper_parser.tasks import parse_documents
-# from search_app.tasks.summerize.tasks import summerization_step, summerize_paragraph, record_to_es
+from search_app.tasks.paper_parser.tasks import parse_documents, parse_documents_seq
+from search_app.tasks.summerize.tasks import summerization_step, summerize_paragraph, record_to_es
 from search_app.core.databases.sql_models import SearchResults
 from search_app.core.services.parsing.pdf_parsing import Document
 from search_app.core.services.search.engine import QueryNERExtractor
@@ -25,7 +25,14 @@ def add_pdfs_to_es(self : task, documents : list[Document]):
 
     documents_where_pdf_to_record = [doc for doc in documents if doc and not doc.pdf_exists]
 
-    resp = helpers.bulk(client=self.esh, actions=[doc.get_pdf() for doc in documents_where_pdf_to_record])
+    doc_to_write = [doc.get_pdf() for doc in documents_where_pdf_to_record]
+
+    with open("./doc_to_write_json.txt", mode='w+') as json_file:
+        json_file.write(str(doc_to_write))
+    resp = helpers.bulk(client=self.esh.es, actions=doc_to_write)
+
+    with open("./bulk_json.txt", mode='w+') as json_file:
+        json_file.write(str(resp))
 
     results = resp.get("items")
 
@@ -42,7 +49,7 @@ def add_pdfs_to_es(self : task, documents : list[Document]):
 @app.task(name='add_paragraph_to_es', queue="tasks.search", bind = True)
 def add_paragraph_to_es(self : task, documents : list[Document]) -> None :
     
-    resp = helpers.bulk(self.esh, actions=it.chain.from_iterable([doc() for doc in documents]))
+    resp = helpers.bulk(self.esh.es, actions=it.chain.from_iterable([doc() for doc in documents]))
 
     if resp['errors'] :
         errors = list()
@@ -91,14 +98,14 @@ def get_paragraphs_content_for_answer(search_result : dict[str, Any]) -> list[tu
     return paragraphs_by_cathegory
 
 @app.task(name='add_search_to_db', queue="tasks.search", bind=True)
-def add_search_to_db(self : task, generated_paragrpahs : list[SummerizedParagraph], search_index : str, created_on : datetime, research_type : str, search_platform : str, user_id : int | None = None, *args, **kwargs) -> list[dict[str, Any]]:
+def add_search_to_db(self : task, generated_paragraphs : list[SummerizedParagraph], search_index : str, created_on : datetime, research_type : str, search_platform : str, user_id : int | None = None, *args, **kwargs) -> list[dict[str, Any]]:
     search = SearchResults(
         search_index            = search_index
         , date_of_search        = created_on
         , research_type         = research_type
         , search_platform       = search_platform
         , user_id               = user_id
-        , generated_paragrpahs  = [p.get_sql_model() for p in generated_paragrpahs]
+        , generated_paragrpahs  = [p.get_sql_model() for p in generated_paragraphs]
     )
     with Session(self.sql_db) as session :
         session.add(search)
@@ -109,9 +116,9 @@ def add_search_to_db(self : task, generated_paragrpahs : list[SummerizedParagrap
 
     search_to_return = search.to_dict()
 
-    search_to_return['generated_paragrpahs'] = [gp() for gp in generated_paragrpahs]
+    search_to_return['generated_paragrpahs'] = [gp() for gp in generated_paragraphs]
 
-    return generated_paragrpahs
+    return generated_paragraphs
 
 @app.task(name='retrieve_bibliographical_info', queue="tasks.search", bind=True)
 def retrieve_bibliographical_info(self : task, summerized_paragraph : SummerizedParagraph) -> SummerizedParagraph:
@@ -196,6 +203,24 @@ def retrieve_bibliographical_info(self : task, summerized_paragraph : Summerized
 #     return result
 
 # @app.task(name='search_app.tasks.search')
+
+@app.task(name='ingest_pdfs', queue="tasks.search")
+def ingest_pdf(user_query:str, search_index:str, created_on : datetime) -> None :
+    
+    files_to_parse = retrieve_files()
+    documents = parse_documents_seq(papers = files_to_parse, user_query = user_query, search_index = search_index, created_on = created_on)
+    documents = add_pdfs_to_es(documents=documents)
+    add_paragraph_to_es(documents=documents)
+
+@app.task(name='get_paragraphs', queue="tasks.search")
+def get_paragraphs(user_query:str, search_index:str, search_type : str, search_platform : str, created_on : datetime, user_id : int | None = None) -> list[dict[str, Any]] :
+    results = search_in_es_database(prompt=user_query)
+    list_of_paragraphs = get_paragraphs_content_for_answer(search_result=results)
+    summerized_paragraphs = summerization_step(retrieved_paragrapahs_from_search = list_of_paragraphs ,search_index = search_index, created_on = created_on)
+    search_out = add_search_to_db(generated_paragrpahs=summerized_paragraphs, search_index=search_index, created_on=created_on, research_type=search_type, search_platform=search_platform, user_id=user_id)
+
+    return search_out
+
 @app.task(name='search_app.tasks.search', queue="tasks.search")
 def get_search_results(prompt : str, search_type : str, search_platform : str,  search_params : dict| None = None, user_id : int | None = None) -> dict[str, Any]:
     
@@ -216,73 +241,29 @@ def get_search_results(prompt : str, search_type : str, search_platform : str,  
     # first_webdriver, _ = get_webdriver_on_page(url=url)
     # search_pages = get_research_pages_on_gs(first_webdriver, nb_pages=nb_pages)    
     
+    # result = chain(
+    #     # get_papers_results_from_google_scholar.s(query_terms = query_terms.list_of_keywords(), nb_pages = nb_pages, query_params = search_params)
+    #     # get_google_scholar_search_url.s()
+    #     # , get_research_pages_on_gs.s(nb_pages=nb_pages)
+    #     retrieve_files.s()
+    #     , parse_documents.s(user_query = prompt, search_index = search_index, created_on = created_on) 
+    #     , add_pdfs_to_es.s()
+    #     , add_paragraph_to_es.s()
+    #     , search_in_es_database.s(prompt=prompt)
+    #     , get_paragraphs_content_for_answer.s()
+    #     , summerization_step.s(search_index = search_index, created_on = created_on)
+    #     , add_search_to_db.s(search_index=search_index, created_on=created_on, research_type=search_type, search_platform=search_platform, user_id=user_id)
+    # )(
+    #     # query_terms=query_terms.list_of_keywords()
+    #     # , query_params=search_params
+    #     )
+    
     result = chain(
         # get_papers_results_from_google_scholar.s(query_terms = query_terms.list_of_keywords(), nb_pages = nb_pages, query_params = search_params)
-        get_google_scholar_search_url.s()
-        , get_research_pages_on_gs.s(nb_pages=nb_pages)
-        , retrieve_files.s()
-        # , parse_documents.s(user_query = prompt, search_index = search_index, created_on = created_on) 
-        # , add_pdfs_to_es.s()
-        # , add_paragraph_to_es.s()
-        # , search_in_es_database.s(prompt=prompt)
-        # , get_paragraphs_content_for_answer.s()
-        # , summerization_step.s(search_index = search_index, created_on = created_on)
-        # , add_search_to_db.s(search_index=search_index, created_on=created_on, research_type=search_type, search_platform=search_platform, user_id=user_id)
-    )(query_terms=query_terms.list_of_keywords(), query_params=search_params)
-
-
-    #### BACK
-    # result = (
-    #     app.signature('get_papers_results_from_google_scholar', kwargs={query_terms : query_terms.list_of_keywords(), 'nb_pages' : nb_pages, 'query_params' : search_params})
-    #     | app.signature('parse_documents', kwargs={'user_query' : prompt, 'search_index' : search_index, 'created_on' : created_on}) 
-    #     | add_pdfs_to_es.s()
-    #     | add_paragraph_to_es.s()
-    #     | search_in_es_database.s(prompt=prompt)
-    #     | get_paragraphs_content_for_answer.s()
-    #     | app.signature('summerization_step', kwargs={'search_index' : search_index, 'created_on' : created_on})
-    #     | add_search_to_db.s(search_index=search_index, created_on=created_on, research_type=search_type, search_platform=search_platform, user_id=user_id)
-    # )()
-    
-    # get_papers_results_from_google_scholar = [
-    #     retrieve_files.s(page=page)
-    #     for page in retrieve_pages.s(query_terms=query_terms.list_of_keywords(), nb_pages=nb_pages)]
-    
-    # parse_documents_chain = chord(get_papers_results_from_google_scholar)(parsing_step.s(user_query = prompt, search_index=search_index, created_on = created_on))
-
-    # get_documents = [
-    #         (
-    #             summerize_paragraph.s(category=category, paragraphs=paragraphs, search_index=search_index, created_on=created_on)
-    #             | record_to_es.s()
-    #             | retrieve_bibliographical_info.s()
-    #         )
-    #         for category, paragraphs in parse_documents_chain]
-    
-    #### BACK
-    # get_documents = [summerization_step.s(category = category, paragraphs = paragraphs, search_index =search_index, created_on = created_on)
-    #         for category, paragraphs in parse_documents_chain(query_terms=query_terms.list_of_keywords(), nb_pages = nb_pages, user_query=prompt, search_index = search_index, created_on = created_on, query_params = search_params).get(disable_sync_subtasks=False)]
-
-
-    # get_documents = [app.signature('summerization_step', kwargs={'category' : category, 'paragraphs' : paragraphs, 'search_index' : search_index, 'created_on' : created_on})
-    #         for category, paragraphs in parse_documents_chain(query_terms=query_terms.list_of_keywords(), nb_pages = nb_pages, user_query=prompt, search_index = search_index, created_on = created_on, query_params = search_params)]
-    
-    # resp = chord(get_documents)(
-    #         add_search_to_db.s(search_index=search_index, created_on=created_on, research_type=search_type, search_platform=search_platform, user_id=user_id)
-    #         )()
-    
-    # resp = (
-    #     get_papers_results_from_google_scholar.s(query_terms=query_terms.list_of_keywords())
-    #     | parse_documents.s(user_query = prompt, search_index=search_index, created_on=created_on)
-    #     | add_pdfs_to_es.s()
-    #     | add_paragraph_to_es.s()
-    #     | search_in_es_database.s(prompt=prompt)
-    #     | group( 
-    #         (
-    #             summerize_paragraph.s(category=category, paragraphs=paragraphs, search_index=search_index, created_on=created_on)
-    #             | record_to_es.s()
-    #             | retrieve_bibliographical_info.s()
-    #         ).s()
-    #         for category, paragraphs in get_paragraphs_content_for_answer.s())
-    #     | add_search_to_db.s(search_index=search_index, created_on=created_on, research_type=search_type, search_platform=search_platform, user_id=user_id)
-    #     )()
+        # get_google_scholar_search_url.s()
+        # , get_research_pages_on_gs.s(nb_pages=nb_pages)
+        ingest_pdf.s(user_query = prompt, search_index = search_index, created_on = created_on)
+        , get_paragraphs.s(user_query = prompt, search_index = search_index, search_type = search_type, search_platform = search_platform, created_on = created_on, user_id = user_id)
+    )()
 
     return result

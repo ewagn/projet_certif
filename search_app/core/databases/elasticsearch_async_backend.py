@@ -14,7 +14,7 @@ class ESHandler():
     def es(self):
         if self._es == None :
             self._es = AsyncElasticsearch(
-                hosts=[{'host': 'localhost', 'port': 9200, 'scheme': 'https'}],
+                hosts=[{'host': 'es01', 'port': 9200, 'scheme': 'https'}],
                 ssl_assert_hostname='es01',
                 basic_auth=('elastic', os.getenv('ELASTIC_PASSWORD')),
             # cert_reqs="CERT_REQUIRED",
