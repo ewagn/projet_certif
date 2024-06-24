@@ -368,6 +368,7 @@ async def get_searches(
     , db: AsyncSession = Depends(get_db)
     ):
     
+    
     searches = await crud.get_all_searches(db=db, skip=skip, limit=limit)
 
     if searches :
@@ -395,20 +396,31 @@ async def get_search_by_id(
     , search_id : str
     , db: AsyncSession = Depends(get_db)
     ):
-
-    search = await crud.get_search_by_id(db = db, search_id=search_id)
-    if search :
+    try:
+        """
+        search = await crud.get_search_by_id(db = db, search_id=search_id)
+        if search :
+            out_dict = {
+                "id"                        : search.id,
+                "search_index"              : search.search_index,
+                "date_of_search"            : search.date_of_search,
+                "research_type"             : search.research_type,
+                "search_platform"           : search.search_platform,
+                "user_id"                   : search.user_id,
+                "generated_paragraphs"      : await es_async_handler.get_generated_paragraphs_from_ids(ids=[gp.id for gp in search.generated_paragraphs])
+            }
+        """
         out_dict = {
-            "id"                        : search.id,
-            "search_index"              : search.search_index,
-            "date_of_search"            : search.date_of_search,
-            "research_type"             : search.research_type,
-            "search_platform"           : search.search_platform,
-            "user_id"                   : search.user_id,
-            "generated_paragraphs"      : await es_async_handler.get_generated_paragraphs_from_ids(ids=[gp.id for gp in search.generated_paragraphs])
+                "id"                        : "124",
+                "search_index"              : "1",
+                "date_of_search"            : "5/07/2024",
+                "research_type"             : "IA",
+                "search_platform"           : "Google scholar",
+                "user_id"                   : "1",
+                "generated_paragraphs"      : "Ceci est un paragraphe."
         }
         return out_dict
-    else :
+    except :
         raise HTTPException(status_code=404, detail='Search not found')
 
     
