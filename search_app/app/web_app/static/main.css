@@ -101,3 +101,6 @@ div.centred_button{
 .footer p {
     color: #0044cc;
 }
+#explanation p {
+    margin-bottom: 1em;
+}

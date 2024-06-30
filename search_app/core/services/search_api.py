@@ -20,7 +20,7 @@ class APISearch():
 
         request_kwargs = search_request.model_dump()
         request_kwargs.update({'user_id' : user_id
-                               , 'research_type' : search_type})
+                               , 'search_type' : search_type})
 
         result : AsyncResult = celery_app.send_task(
             task_celery.task_make_search
@@ -37,7 +37,9 @@ class APISearch():
         try :
             result.status
             if result.status == "SUCCESS" :
-                result.forget()
+                result_out = AsyncResult(id=result.result[0][0])
+                return result_out
+                # result.forget()
         except Exception :
             return None
         

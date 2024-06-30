@@ -41,7 +41,7 @@ class Document():
 
         instance = cls(pdf_file, ris_file, database, created_on, user_query, search_index, es_handler=es_handler, *args, **kwargs)
 
-        lg.debug(f"Le docuement est crée.")
+        lg.debug(f"Le document est crée.")
 
         ref_parsing = instance.__parse_bibref()
         if not ref_parsing :
@@ -57,7 +57,7 @@ class Document():
             return instance  
         
         else:
-            lg.info("La creation du document à échoué (absence de fichier pdf ou de référence bibliographiques).")
+            lg.info("La creation du document à échoué (absence de fichier pdf).")
             return None
     
     @property
@@ -205,18 +205,19 @@ class Document():
                         info    :   infos[info]
                     })
 
+            return document
 
-            out_document = {
-                "_index":   self.__es_api.pdfs_index,
-                "doc":      document,
-            }
+            # out_document = {
+            #     "_index":   self.__es_api.pdfs_index,
+            #     "doc":      document,
+            # }
             
-            return out_document
+            # return out_document
         else :
             return None
 
     def __call__(self, *args: Any, **kwds: Any) -> Any:
-        if not self. self.pdf_exists == 'False' and not self.es_pdf_id :
+        if not self.pdf_exists == 'True' and not self.es_pdf_id :
             resp = self.__es_api.add_document(**self.get_pdf())
             self.es_pdf_id = resp.get("_id", None)
             

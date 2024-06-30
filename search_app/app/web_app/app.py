@@ -62,7 +62,7 @@ def chat(**kwargs):
     
     if task_id :
         url = f"http://0.0.0.0:8000/tasks/{task_id}"
-        resp = requests.get(url=url, data=data)
+        resp = requests.get(url=url)
         if resp.status_code ==200 :
             resp_data = resp.json()
             response_dict = {
@@ -84,13 +84,14 @@ def chat(**kwargs):
             return jsonify({'response': response_dict})
 
     elif user_input :
-        url = "http://0.0.0.0:8000/users/me/search/"
+        url = "http://0.0.0.0:8000/users/me/search?search_type=WEB"
+        headers = {"Authorization": session['token']}
         data = {
             "search_platform": "google_scholar",
             "prompt": user_input,
-            "search_type": "web"
+            # "search_type": "web"
             }
-        resp = requests.post(url=url, data=data)
+        resp = requests.post(url=url, json=data, headers=headers)
         print(resp.status_code)
         if resp.status_code == 202:
             resp_data = resp.json()

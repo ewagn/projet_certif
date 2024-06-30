@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="container">
-    <h1>ChatGPT Application</h1>
+    <h1>I-Search Application</h1>
     <p> User prompt : {{ user_input }} </p>
     <label for="response">Response:</label>
     <textarea id="response" readonly rows="10"></textarea>
@@ -46,7 +46,7 @@
     responseElement.style.display = 'none'
     var task_id = ''
 
-    let apiInterval
+    var apiInterval
 
     function callAPIforTask () {
         let data = new FormData()
@@ -76,7 +76,7 @@
             })
     }
     function callAPIforTaskIterative (interval) {
-        apiInterval = setInterval(callAPIforTask(), interval)
+        apiInterval = setInterval(callAPIforTask, interval)
     }
     function callAPIforPrompt() {
         let data = new FormData()
@@ -94,7 +94,7 @@
                     loadingElement.innerHTML = `Token expired go to <a href=${loginURL}>login page</a>`
                 } else if (data.response != "error") {
                     task_id = data.response.task_id;
-                    callAPIforTaskIterative(3000);
+                    callAPIforTaskIterative(5000);
                 } else {
                     console.error('Error:', error);
                     loadingElement.innerText = 'Error';

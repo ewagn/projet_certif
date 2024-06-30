@@ -20,43 +20,88 @@ from search_app.core.services.text_summarize.models import SummerizedParagraph
 
 lg : Logger = get_task_logger(__name__)
 
+def expend_actions_pdf_docs(doc : Document):
+    action = {
+        "index" :
+            {"_index": "pdf-files",}
+    }
+
+    return action, doc.get_pdf()
+
 @app.task(name='add_pdfs_to_es', queue="tasks.search", bind = True)
 def add_pdfs_to_es(self : task, documents : list[Document]):
 
+
+
     documents_where_pdf_to_record = [doc for doc in documents if doc and not doc.pdf_exists]
 
-    doc_to_write = [doc.get_pdf() for doc in documents_where_pdf_to_record]
+    # doc_to_write = [doc.get_pdf() for doc in documents_where_pdf_to_record]
 
-    with open("./doc_to_write_json.txt", mode='w+') as json_file:
-        json_file.write(str(doc_to_write))
-    resp = helpers.bulk(client=self.esh.es, actions=doc_to_write)
+    # with open("./doc_to_write_json.txt", mode='w+') as json_file:
+    #     json_file.write(str(doc_to_write))
 
-    with open("./bulk_json.txt", mode='w+') as json_file:
-        json_file.write(str(resp))
 
-    results = resp.get("items")
+    
+    resp = helpers.streaming_bulk(client=self.esh.es, actions=documents_where_pdf_to_record, expand_action_callback=expend_actions_pdf_docs)
 
-    if results:
-        for document, result in zip(documents_where_pdf_to_record, results) :
-            document.es_pdf_id = result["_id"]
+    # with open("./bulk_json.txt", mode='w+') as json_file:
+    #     json_file.write(str(resp))
+
+    # results = resp.get("items")
+
+    # es_resp = [r for r in resp]
+
+    not_recorded_file = list()
+    if resp:
+        for document, result in zip(documents_where_pdf_to_record, resp) :
+            if result[0]:
+                document.es_pdf_id = result[1]['index']["_id"]
+            else :
+                lg.error(f"Le fichier pdf {document.file_name} n'a pu être enregistré.")
+                not_recorded_file.append(document)
+        
+        if not_recorded_file :
+            for file in not_recorded_file:
+                documents_where_pdf_to_record.remove(file)
     else :
         e_text = "Les documents pdf n'ont pu être enregistrés dans la base de données"
         lg.error(e_text)
         raise RuntimeError(e_text)
     
-    return documents
+    return documents_where_pdf_to_record
 
 @app.task(name='add_paragraph_to_es', queue="tasks.search", bind = True)
-def add_paragraph_to_es(self : task, documents : list[Document]) -> None :
+def add_paragraph_to_es(self : task, documents : list[Document], search_index : str) -> None :
     
-    resp = helpers.bulk(self.esh.es, actions=it.chain.from_iterable([doc() for doc in documents]))
+    self.esh.create_index(index_name=search_index)
 
-    if resp['errors'] :
+    with open('./search_app/initial_paragraphs.txt', "w+") as parg_file:
+        parg_file.write(str(documents))
+
+    def add_paragraphs_callback(paragraph):
+        action = {
+            "index" :
+                {"_index": paragraph['_index'],}
+        }
+        return action, paragraph['doc']
+
+    
+    # doc_paragraphs = map(add_paragraphs_callback, documents)
+    # doc_paragraphs = it.chain.from_iterable(doc_paragraphs)
+
+
+    # resp = helpers.bulk(self.esh.es, actions=doc_paragraphs)
+
+    paragraphs = [p for p in it.chain.from_iterable([doc() for doc in documents])]
+    with open('./search_app/paragraphs.txt', "w+") as parg_file:
+        parg_file.write(str(paragraphs))
+
+    resp = helpers.bulk(self.esh.es, actions=paragraphs, expand_action_callback=add_paragraphs_callback, request_timeout=600)
+
+    if resp[1] :
         errors = list()
-        for item in resp['items'] :
-            data = list(item.values())[0]
-            if "error" in data :
-                errors.append(f'{data["error"]["type"]} -> {data["error"]["reason"]}')
+        for error in resp[1] :
+            errors.append(f'{error["error"]["type"]} -> {error["error"]["reason"]}')
         
         e_text = "Des erreurs sont apparues lors de l'ajout des paragraphs a la base de données elasticsearch : " + ", ".join(errors)
         lg.error(e_text)
@@ -210,7 +255,7 @@ def ingest_pdf(user_query:str, search_index:str, created_on : datetime) -> None 
     files_to_parse = retrieve_files()
     documents = parse_documents_seq(papers = files_to_parse, user_query = user_query, search_index = search_index, created_on = created_on)
     documents = add_pdfs_to_es(documents=documents)
-    add_paragraph_to_es(documents=documents)
+    add_paragraph_to_es(documents=documents, search_index=search_index)
 
 @app.task(name='get_paragraphs', queue="tasks.search")
 def get_paragraphs(user_query:str, search_index:str, search_type : str, search_platform : str, created_on : datetime, user_id : int | None = None) -> list[dict[str, Any]] :
@@ -263,7 +308,7 @@ def get_search_results(prompt : str, search_type : str, search_platform : str,  
         # get_google_scholar_search_url.s()
         # , get_research_pages_on_gs.s(nb_pages=nb_pages)
         ingest_pdf.s(user_query = prompt, search_index = search_index, created_on = created_on)
-        , get_paragraphs.s(user_query = prompt, search_index = search_index, search_type = search_type, search_platform = search_platform, created_on = created_on, user_id = user_id)
+        , get_paragraphs.si(user_query = prompt, search_index = search_index, search_type = search_type, search_platform = search_platform, created_on = created_on, user_id = user_id)
     )()
 
     return result

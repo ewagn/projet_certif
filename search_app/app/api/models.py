@@ -81,12 +81,12 @@ class Search(SearchOneRetrieve):
 
 class SearchRequest(SearchBase):
     prompt          : str
-    search_type     : str = "api"
+    # search_type     : str = "api"
     search_platform : str = "google_scholar"
 
 class TaskBase(BaseModel):
     id      : str
-    name    : str
+    # name    : str
 
 class TaskCreated(TaskBase):
     model_config = ConfigDict(from_attributes=True)
@@ -104,4 +104,13 @@ class TaskResult(TaskBase):
     model_config = ConfigDict(from_attributes=True)
 
     status  : str
-    result  : Search | None = None
+    result  : Search | str | None = None
+    @field_validator('result')
+    @classmethod
+    def result_validator(cls, v : str, info: ValidationInfo) -> Search | str | None :
+        if isinstance(v, str) :
+            return v
+        elif isinstance(v, dict):
+            return Search.model_validate(v)
+        else :
+            return None

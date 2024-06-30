@@ -52,7 +52,7 @@ class ESHandler():
         
             self._es = self.create_es_engine()
 
-            self.put_licence()
+            # self.put_licence()
 
             if not self.__check_if_elser_model_install():
                 self.__setup_elser_model()
@@ -81,7 +81,18 @@ class ESHandler():
         models_installed = self.es.ml.get_trained_models()
         for model in models_installed['trained_model_configs']:
             if '.elser_model_2' in model['model_id']:
-                is_install = True
+                status = self.es.ml.get_trained_models_stats(
+                    model_id=".elser_model_2",
+                )
+                if status["trained_model_stats"]:
+                    if status["trained_model_stats"][0].get("deployment_stats", None):
+                        if status["trained_model_stats"][0]["deployment_stats"].get("state", None):
+                            if status["trained_model_stats"][0]["deployment_stats"]["state"] == "started":
+                                is_install = True
+                if not is_install :
+                    self.es.ml.delete_trained_model(model_id=".elser_model_2", force=True)
+                    sleep(30)
+
         return is_install
     
     def __create_elser_pipeline(self):
@@ -106,16 +117,33 @@ class ESHandler():
             model_id=".elser_model_2"
             , input={"field_names" : ["text_field"]}
         )
-
-        while True :
+        # sleep(5)
+        model_downloaded = False
+        while not model_downloaded :
             status = self.es.ml.get_trained_models(
                 model_id=".elser_model_2"
                 , include="definition_status"
             )
             if status["trained_model_configs"][0]["fully_defined"] :
-                return True
+                model_downloaded = True
             else :
                 sleep(5)
+        
+        self.es.ml.start_trained_model_deployment(
+            model_id='.elser_model_2'
+            , number_of_allocations=1
+            , threads_per_allocation=8
+            , wait_for="started"
+            ,timeout="10m")
+        while True:
+            status = self.es.ml.get_trained_models_stats(
+                model_id=".elser_model_2",
+            )
+            if status["trained_model_stats"][0]["deployment_stats"]["state"] == "started":
+                return True
+            else:
+                sleep(5)
+
     
     @property
     def pdfs_index(self):
@@ -146,7 +174,7 @@ class ESHandler():
                             'type' : "integer"
                         },
                         "pages": {
-                            'type' : "integer"
+                            'type' : "text"
                         },
                         'issn': {
                             'type' : "keyword"
@@ -209,7 +237,7 @@ class ESHandler():
 
     def create_index(self, index_name:str, *args, **kwargs):
         self.es.indices.delete(index=index_name, ignore_unavailable=True)
-        settings={"index": {"default_pipeline": "elser-ingest-pipeline"}},
+        settings={"index": {"default_pipeline": "elser-ingest-pipeline"}}
         mappings={
             'properties': {
                 "database": {
@@ -221,6 +249,15 @@ class ESHandler():
                 'created_on': {
                     'type': 'date'
                 },
+                "pdf_page": {
+                    'type' : "integer"
+                },
+                "part_title": {
+                    'type' : 'keyword'
+                },
+                "sub_title": {
+                    'type' : 'keyword'
+                },
                 "content": {
                     "type": "text",
                     "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
@@ -228,12 +265,12 @@ class ESHandler():
                 "content_embedding": {
                     "type": "sparse_vector",
                 },
-                "content_vector" : {
-                    "type": {'dense_vector'},
-                    "dims": 256,
-                    "index": True,
-                    "similarity": "cosine"
-                },
+                # "content_vector" : {
+                #     "type": {'dense_vector'},
+                #     "dims": 256,
+                #     "index": True,
+                #     "similarity": "cosine"
+                # },
             },
         }
         self.es.indices.create(index=index_name, settings=settings, mappings=mappings)
@@ -321,26 +358,28 @@ class ESHandler():
         #     }
         # }
         aggs = {
-            'sample' : {
-                'selected_paragraphs' : {
+            'selected_paragraphs' : {
+                'sampler' : {
                     'shard_size' : 100,
-                    'aggs' : {
-                        'keywords' : {
-                            "significant_text" : {'field' : "content"},
-                            'filter_duplicate_text' : True,
+                },
+                'aggs' : {
+                    'keywords' : {
+                        "significant_text" : {
+                            'field' : "content",
                             'size' : 5,
                             'min_doc_count' : 3,
-                        },
+                            'filter_duplicate_text' : True,
+                            },
                         'aggs' : {
                             'docs' : {
-                                "top_hints" : {
+                                "top_hits" : {
                                     "size" : 5,
                                     "_source" : {
                                         'includes' : ["es_pdf_id", 'content']
                                     }
                                 },
                             },
-                        }
+                        },
                     },
                 },          
             },

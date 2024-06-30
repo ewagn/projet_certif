@@ -53,7 +53,7 @@ app = FastAPI(
 
 Instrumentator().instrument(app).expose(app)
 
-@app.post("/token")
+@app.post("/token", tags=['all'])
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
     , db: AsyncSession = Depends(get_db)
@@ -81,6 +81,7 @@ async def login_for_access_token(
 
 @app.post(
         "/users/"
+        , tags=["all"]
         , response_model=User
         , description="Route to create a user."
         , status_code=status.HTTP_201_CREATED)
@@ -100,9 +101,13 @@ async def create_user(
     
     return db_user
 
-@app.get("/users/", response_model=list[User])
+@app.get(
+        "/users/"
+        , tags=["admin", "accounts"]
+        , response_model=list[User])
 async def read_users(
     current_user: Annotated[User, Security(sec.get_current_active_user, scopes=['admin'])]
+    , tags=["admin"]
     , skip: Annotated[int , Query()] = 0
     , limit: Annotated[int, Query()] = 100
     , db: AsyncSession = Depends(get_db)
@@ -112,13 +117,22 @@ async def read_users(
 
     return users
 
-@app.get("/users/me/", response_model=User)
+@app.get(
+        "/users/me/"
+        , tags=["info", "users"]
+         , response_model=User
+         )
 async def read_user_me(
     current_user : Annotated[User, Security(sec.get_current_active_user, scopes=['me'])]
 ):
     return current_user
 
-@app.delete("/users/me", response_model=UserDeleted, status_code=status.HTTP_200_OK)
+@app.delete(
+        "/users/me"
+        , tags=["account management", "users"]
+        , response_model=UserDeleted
+        , status_code=status.HTTP_200_OK
+        )
 async def delete_user(
     current_user : Annotated[User, Security(sec.get_current_active_user, scopes=['me'])]
     , db: AsyncSession = Depends(get_db)):
@@ -134,9 +148,10 @@ async def delete_user(
 
 @app.post(
         "/users/me/search"
+        , tags=["search", "users"]
         , response_model=TaskCreated
         , status_code=status.HTTP_202_ACCEPTED)
-async def make_search(
+async def make_search_from_API(
     current_user : Annotated[User, Security(sec.get_current_active_user, scopes=['me'])]
     , search_params : Annotated[SearchRequest, Body()] 
     , search_type : Annotated[str, Query(
@@ -145,7 +160,7 @@ async def make_search(
         , description="Way to create search (WEB for webapp and API for API)")] = 'API'
     ) :
     """
-    Lunch search in backend.
+    Launch search in backend.
     Gives an ID you need to store for 
     """
 
@@ -160,7 +175,11 @@ async def make_search(
 
     return resp
 
-@app.get("/users/me/searches/", response_model=list[Search], status_code=status.HTTP_200_OK)
+@app.get(
+        "/users/me/searches/"
+        , tags=["search", "users"]
+        , response_model=list[Search]
+        , status_code=status.HTTP_200_OK)
 async def get_search_for_user(
     current_user : Annotated[User, Security(sec.get_current_active_user, scopes=['me'])]
     , skip: Annotated[int , Query()] = 0
@@ -190,7 +209,11 @@ async def get_search_for_user(
     
     return searches_out
 
-@app.get("/users/me/searches/{search_id}", response_model=list[Search])
+@app.get(
+        "/users/me/searches/{search_id}"
+        , tags=["search", "users"]
+        , response_model=list[Search]
+        )
 async def get_search_from_user_by_id(
     current_user : Annotated[User, Security(sec.get_current_active_user, scopes=['me'])]
     , search_id : str
@@ -214,7 +237,12 @@ async def get_search_from_user_by_id(
     else :
         raise HTTPException(status_code=404, detail='Search not found')
 
-@app.delete("/users/me/searches/{search_id}", response_model=SearchDeleted, status_code=status.HTTP_200_OK)
+@app.delete(
+        "/users/me/searches/{search_id}"
+        , tags=["search", "users"]
+        , response_model=SearchDeleted
+        , status_code=status.HTTP_200_OK
+        )
 async def delete_search_from_user(
     current_user : Annotated[User, Security(sec.get_current_active_user, scopes=['me'])]
     , search_id : str
@@ -236,7 +264,10 @@ async def delete_search_from_user(
         raise HTTPException(status_code=status.HTTP_304_NOT_MODIFIED, detail='No modification made on database.')
 
 
-@app.get("/users/{user_id}", response_model=User)
+@app.get(
+        "/users/{user_id}"
+        , tags=["admin"]
+        , response_model=User)
 async def read_user(
     current_user: Annotated[User, Security(sec.get_current_active_user, scopes=['admin'])]
     , user_id: int
@@ -251,7 +282,11 @@ async def read_user(
     return db_user
 
 
-@app.delete("/users/{user_id}", response_model=UserDeleted, status_code=status.HTTP_200_OK)
+@app.delete(
+        "/users/{user_id}"
+        , tags=["admin", "accounts"]
+        , response_model=UserDeleted, status_code=status.HTTP_200_OK
+        )
 async def delete_user(
     current_user: Annotated[User, Security(sec.get_current_active_user, scopes=['admin'])]
     , user_id: int
@@ -272,7 +307,11 @@ async def delete_user(
         raise HTTPException(status_code=500, detail='User not deleted')
 
 
-@app.get("/users/{user_id}/searches/", response_model=list[Search], status_code=status.HTTP_200_OK)
+@app.get(
+        "/users/{user_id}/searches/"
+        , tags=["admin", "search"]
+        , response_model=list[Search]
+        , status_code=status.HTTP_200_OK)
 async def get_search_for_user(
     current_user: Annotated[User, Security(sec.get_current_active_user, scopes=['admin'])]
     , user_id: int
@@ -304,7 +343,10 @@ async def get_search_for_user(
     
     return searches_out
 
-@app.get("/users/{user_id}/searches/{search_id}", response_model=list[Search])
+@app.get(
+        "/users/{user_id}/searches/{search_id}"
+        , tags=["admin", "search"]
+        , response_model=list[Search])
 async def get_search_from_user_by_id(
     current_user: Annotated[User, Security(sec.get_current_active_user, scopes=['admin'])]
     , user_id: int
@@ -332,7 +374,10 @@ async def get_search_from_user_by_id(
     else :
         raise HTTPException(status_code=404, detail='Search not found')
 
-@app.delete("/users/{user_id}/searches/{search_id}", response_model=SearchDeleted, status_code=status.HTTP_200_OK)
+@app.delete(
+        "/users/{user_id}/searches/{search_id}"
+        , tags=["admin", "search"]
+        , response_model=SearchDeleted, status_code=status.HTTP_200_OK)
 async def delete_search_from_user(
     current_user: Annotated[User, Security(sec.get_current_active_user, scopes=['admin'])]
     , user_id: int
@@ -360,7 +405,10 @@ async def delete_search_from_user(
         raise HTTPException(status_code=status.HTTP_304_NOT_MODIFIED, detail='No modification made on database.')
 
 
-@app.get("/searches/", response_model=list[Search])
+@app.get(
+        "/searches/"
+        , tags=["admin", "search"]
+        , response_model=list[Search])
 async def get_searches(
     current_user: Annotated[User, Security(sec.get_current_active_user, scopes=['admin'])]
     , skip: Annotated[int , Query()] = 0
@@ -389,7 +437,11 @@ async def get_searches(
     
     return searches_out
 
-@app.get("/searches/{search_id}", response_model=Search, status_code=status.HTTP_200_OK)
+@app.get(
+        "/searches/{search_id}"
+        , tags=["admin", "search"]
+        , response_model=Search, status_code=status.HTTP_200_OK
+        )
 async def get_search_by_id(
     current_user: Annotated[User, Security(sec.get_current_active_user, scopes=['admin'])]
     , search_id : str
@@ -412,7 +464,11 @@ async def get_search_by_id(
         raise HTTPException(status_code=404, detail='Search not found')
 
     
-@app.delete("/searches/{search_id}", response_model=SearchDeleted, status_code=status.HTTP_200_OK)
+@app.delete(
+        "/searches/{search_id}"
+        , tags=["admin", "search"]
+        , response_model=SearchDeleted, status_code=status.HTTP_200_OK
+        )
 async def delete_search(
     current_user: Annotated[User, Security(sec.get_current_active_user, scopes=['admin'])]
     , search_id : str
@@ -432,8 +488,11 @@ async def delete_search(
     if is_deleted :
         return deleted_search
 
-@app.get("/tasks/{task_id}", response_model=TaskResult)
-async def get_task(
+@app.get(
+        "/tasks/{task_id}"
+        , tags=["all"]
+        , response_model=TaskResult)
+async def get_task_from_api(
     task_id : str
     , response : Response
     ):
@@ -447,7 +506,8 @@ async def get_task(
 
     if result.state == "SUCCESS" :
         response.status_code = status.HTTP_200_OK
-    
+    elif result.state == "FAILURE" :
+        response.status_code = status.HTTP_424_FAILED_DEPENDENCY
     else :
         response.status_code = status.HTTP_202_ACCEPTED
     
